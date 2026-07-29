@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import re
 import requests
+import base64
 from pypdf import PdfReader
 
 # 1. 網頁頁面設定
@@ -92,8 +93,9 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
+      * **掃描檔影印本自動辨識**：支援影像與照片提煉。
       * **eHRP 系統介面 1:1 精確對齊**：欄位命名與排列完全匹配真實 eHRP 系統。
-      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、數字金額格式化。
+      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
     """)
     
     st.divider()
@@ -224,23 +226,14 @@ if uploaded_file:
                     else:
                         file_text = f"檔名: {uploaded_file.name}"
 
-                    if not file_text.strip():
-                        file_text = f"檔案名稱: {uploaded_file.name} (請儘量從此入職表格/CV 中提煉個人資料)"
-
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
                     請嚴格按照以下微觀欄位名稱輸出：
                     Header: employee_no
-                    Particulars: 
-                      - given_name, surname, name_on_id, given_name_secondary, surname_secondary
-                      - id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion
-                      - telephone_home, mobile, secondary_contact, employment_status, probation_months
+                    Particulars: given_name, surname, name_on_id, given_name_secondary, surname_secondary, id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion, telephone_home, mobile, secondary_contact, employment_status, probation_months
                     Address: address_line_1, address_line_2, address_line_3, f_post_code
-                    Employment: 
-                      - designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme
-                      - position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
-                    Salary: 
-                      - salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
+                    Employment: designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme, position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
+                    Salary: salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
                     Education (陣列): [{qualifications, major_in, institution, year_grad}]
                     Prof_Cert (陣列): [{cert_name, institution, year_obtain}]
                     Next_Of_Kin (陣列): [{relationship, surname, given_name, pri_contact}]
@@ -249,6 +242,7 @@ if uploaded_file:
                     若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
                     """
 
+                    # 發送 API 請求
                     if active_token.startswith("gsk_"):
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
                         model_name = "llama-3.3-70b-versatile"
@@ -257,7 +251,7 @@ if uploaded_file:
                             "model": model_name,
                             "messages": [
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                                {"role": "user", "content": f"請解析以下文件內容並輸出 JSON：\n\n{file_text}"}
                             ],
                             "response_format": {"type": "json_object"}
                         }
@@ -266,7 +260,7 @@ if uploaded_file:
                     elif active_token.startswith("AIzaSy"):
                         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
                         payload = {
-                            "contents": [{"parts": [{"text": f"{system_prompt}\n\n請解析以下文件並輸出 JSON：\n\n{file_text}"}]}],
+                            "contents": [{"parts": [{"text": f"{system_prompt}\n\n請解析以下文件內容並輸出 JSON：\n\n{file_text}"}]}],
                             "generationConfig": {"response_mime_type": "application/json"}
                         }
                         response = requests.post(api_url, json=payload, timeout=30)
@@ -284,7 +278,7 @@ if uploaded_file:
                             "model": model_name,
                             "messages": [
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                                {"role": "user", "content": f"請解析以下文件內容並輸出 JSON：\n\n{file_text}"}
                             ],
                             "response_format": {"type": "json_object"}
                         }
@@ -316,7 +310,6 @@ if "normalized_json" in st.session_state:
         "Education & Prof Cert", "Next Of Kin", "Prev. Employment", "JSON 數據庫"
     ])
     
-    # 1. Particulars Tab
     with tab1:
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -345,14 +338,12 @@ if "normalized_json" in st.session_state:
             st.text_input("PROBATION MONTHS", value=data["particulars"]["probation_months"], disabled=True)
             st.text_input("SECONDARY CONTACT", value=data["particulars"]["secondary_contact"], disabled=True)
 
-    # 2. Address Tab
     with tab2:
         st.text_input("ADDRESS LINE 1", value=data["address"]["address_line_1"], disabled=True)
         st.text_input("ADDRESS LINE 2", value=data["address"]["address_line_2"], disabled=True)
         st.text_input("ADDRESS LINE 3", value=data["address"]["address_line_3"], disabled=True)
         st.text_input("F. POST CODE", value=data["address"]["f_post_code"], disabled=True)
 
-    # 3. Employment Tab
     with tab3:
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -375,7 +366,6 @@ if "normalized_json" in st.session_state:
             st.text_input("ACCOUNT NO", value=data["employment"]["account_no"], disabled=True)
             st.text_input("EMAIL", value=data["employment"]["email"], disabled=True)
 
-    # 4. Salary Tab
     with tab4:
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -391,7 +381,6 @@ if "normalized_json" in st.session_state:
             st.text_input("ADD. RATE", value=data["salary"]["add_rate"], disabled=True)
             st.text_input("EFFECTIVE DATE", value=data["salary"]["effective_date"], disabled=True)
 
-    # 5. Education & Prof Cert Tab
     with tab5:
         st.subheader("🎓 Education (學歷紀錄)")
         if data["education"]:
@@ -405,7 +394,6 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無專業證書紀錄")
 
-    # 6. Next Of Kin Tab
     with tab6:
         st.subheader("👨‍👩‍👧 Next Of Kin (緊急聯絡人)")
         if data["next_of_kin"]:
@@ -413,7 +401,6 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無緊急聯絡人紀錄")
 
-    # 7. Prev. Employment Tab
     with tab7:
         st.subheader("💼 Prev. Employment (過往工作履歷)")
         if data["prev_employment"]:
@@ -421,7 +408,6 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無過往履歷紀錄")
 
-    # 8. JSON 數據庫
     with tab8:
         st.subheader("eHRP Clean Payload (用於 Chrome Extension 一鍵填表)")
         st.json(data)
