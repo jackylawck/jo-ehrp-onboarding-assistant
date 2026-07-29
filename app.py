@@ -94,7 +94,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     st.markdown("""
     * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
     * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
-    * **指向性核對原則 (Source Grounding)**：合約定條款，證件定身份，申請表/CV及證件副本定學歷、履歷與專業證書。
+    * **指向性核對原則 (Source Grounding)**：合約定條款，證件定身份，申請表定電話、住址與緊急聯絡人。
     """)
 
 # 5. 側邊欄 (Sidebar)
@@ -304,8 +304,9 @@ if uploaded_file:
                         file_text = uploaded_file.read().decode("utf-8")
 
                     status_box.write(f"📊 **內部審計日誌**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
-                    status_box.write("🧠 正在根據「多源指向性核對原則」交叉校驗學歷、履歷與專業證書...")
+                    status_box.write("🧠 正在根據「多源指向性核對原則」交叉校驗電話、住址、學歷及履歷...")
 
+                    # 【指向性增強 Prompt】
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
@@ -318,13 +319,16 @@ if uploaded_file:
                        - 英文姓名與身份證號碼 -> 必須以「香港身份證副本」為絕對準則。
                        - 中文姓名拆分 -> surname_secondary 填「中文姓氏」(如 趙)，given_name_secondary 填「中文名字」(如 榮發)。
 
-                    3. 銀行資料 (bank, account_no)：
+                    3. 聯絡電話與居住地址 (mobile, address_line_1, address_line_2, address_line_3)：
+                       - **手提電話 (mobile)** 與 **居住地址 (address)** -> **必須優先從「職位申請表 (HRF-006)」的「個人資料」區塊提取** (如有「住址證明影印本」可做對照參考)。
+
+                    4. 銀行資料 (bank, account_no)：
                        - 必須以「銀行卡影印本」或「職員證簽收及扣薪授權書」為準 (如 HANG SENG, 2419411158)。
 
-                    4. 緊急聯絡人 (next_of_kin)：
-                       - **必須優先從「職位申請表」中的「緊急聯絡人」區塊提取** (例如: relationship: MOTHER, surname: 陳, given_name: 月笑, pri_contact: 97273758)。
+                    5. 緊急聯絡人 (next_of_kin)：
+                       - **必須優先從「職位申請表 (HRF-006)」中的「緊急聯絡人」區塊提取** (例如: relationship: MOTHER, surname: 陳, given_name: 月笑, pri_contact: 97273758)。
 
-                    5. 學歷、專業證書與過往履歷 (Education, Prof Cert, Prev Employment)：
+                    6. 學歷、專業證書與過往履歷 (Education, Prof Cert, Prev Employment)：
                        - **學歷紀錄 (education)**：請從「CV」或「職位申請表 (HRF-006)」的「學歷及資格」區塊提煉 (包含 qualifications, major_in, institution, year_grad)。
                        - **過往工作履歷 (prev_employment)**：請從「CV」或「職位申請表 (HRF-006)」的「工作履歷」區塊提煉 (包含 company, date_join, date_left, designation, last_drawn)。
                        - **專業證書 (prof_cert)**：請仔細檢視上傳文件中的所有專業證書副本圖像，將每一張證書整理進 prof_cert 陣列 (包含 cert_name, institution, year_obtain)。
@@ -335,8 +339,8 @@ if uploaded_file:
                     【欄位結構】
                     - employee_no: 員工編號
                     - given_name, surname, given_name_secondary, surname_secondary
+                    - mobile, address_line_1, address_line_2, address_line_3
                     - designation, department, commencement_date, bank, account_no, salary, rank, grade, point
-                    - address_line_1, address_line_2, address_line_3
                     - education (陣列): [{qualifications, major_in, institution, year_grad}]
                     - prof_cert (陣列): [{cert_name, institution, year_obtain}]
                     - next_of_kin (陣列): [{relationship, surname, given_name, pri_contact}]
@@ -530,7 +534,6 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無過往履歷紀錄")
 
-    # 采納朋友建議：加入 JSON 下載按鈕 (Tab 8)
     with tab8:
         st.subheader("eHRP Clean Payload (用於 Chrome Extension 一鍵填表)")
         
