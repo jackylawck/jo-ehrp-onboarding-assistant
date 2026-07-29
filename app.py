@@ -29,39 +29,29 @@ elif "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
     secret_token = st.secrets["OPENAI_API_KEY"]
     token_source = "OPENAI_API_KEY"
 
-# 3. 香港常見銀行 Clearing Code 對照表
-BANK_CLEARING_CODES = {
-    "004": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行"],
-    "024": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行"],
-    "012": ["BANK OF CHINA", "BOC", "中銀", "中國銀行"],
-    "003": ["STANDARD CHARTERED", "SCB", "渣打", "渣打銀行"],
-    "006": ["CITIBANK", "CITI", "花旗", "花旗銀行"],
-    "015": ["BANK OF EAST ASIA", "BEA", "東亞", "東亞銀行"],
-    "025": ["SHANGHAI COMMERCIAL BANK", "上商", "上海商業銀行"],
-    "016": ["DBS", "DBS BANK", "星展", "星展銀行"],
-    "020": ["WING LUNG", "CMB WING LUNG", "招商永隆", "永隆"],
-    "072": ["INDUSTRIAL AND COMMERCIAL BANK OF CHINA", "ICBC", "工銀亞洲", "中國工商銀行"],
-    "040": ["DAH SING", "大新", "大新銀行"],
-    "393": ["ANT BANK", "螞蟻銀行"],
-    "387": ["ZA BANK", "眾安銀行"],
-    "388": ["MOX", "MOX BANK"]
+# 3. 香港常見銀行名稱標準化對照表
+BANK_MAP = {
+    "HSBC": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行", "004"],
+    "HANG SENG": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行", "024"],
+    "BOC": ["BANK OF CHINA", "BOC", "中銀", "中國銀行", "012"],
+    "SCB": ["STANDARD CHARTERED", "SCB", "渣打", "渣打銀行", "003"],
+    "CITIBANK": ["CITIBANK", "CITI", "花旗", "花旗銀行", "006"],
+    "BEA": ["BANK OF EAST ASIA", "BEA", "東亞", "東亞銀行", "015"],
+    "DBS": ["DBS", "DBS BANK", "星展", "星展銀行", "016"]
 }
 
-def get_bank_clearing_code(bank_name):
-    if not bank_name:
+def normalize_bank_name(bank_str):
+    if not bank_name_str := str(bank_str).strip().upper():
         return ""
-    clean_name = str(bank_name).strip().upper()
-    if re.match(r'^\d{3}$', clean_name):
-        return clean_name
-    for code, keywords in BANK_CLEARING_CODES.items():
+    for std_name, keywords in BANK_MAP.items():
         for kw in keywords:
-            if kw in clean_name:
-                return f"{code} ({clean_name})"
-    return clean_name
+            if kw in bank_name_str:
+                return std_name
+    return bank_name_str
 
 # 4. 主頁面標題區塊
 st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
-st.subheader("📋 eHRP 入職資料智能助手 (1:1 完整對齊版)")
+st.subheader("📋 eHRP 入職資料智能助手")
 
 st.info("🔒 **內部數據安全保障**：本系統採用純本地 Session 數據標準化技術，您上傳的入職表格/CV 文件只會暫存在當前網頁會話中。**當您關閉或重新整理網頁時，數據會立即被物理銷毀**，絕對不會儲存到互聯網上，請放心使用。")
 
@@ -101,9 +91,8 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **eHRP 全介面 1:1 精準對齊**：包含 Particulars, Address, Employment, Salary, Education, Next of Kin 及 Prev. Employment。
-      * **銀行編號 (Clearing Code) 自動轉化**：支援自動對照 3 位數銀行代號。
-      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
+      * **eHRP 系統介面 1:1 精確對齊**：欄位命名與排列完全匹配真實 eHRP 系統。
+      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、數字金額格式化。
     """)
     
     st.divider()
@@ -116,7 +105,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數 (對齊真版 eHRP 欄位結構)
+# 6. eHRP 格式清洗核心函數 (動態資料清洗，不寫死任何特定個案)
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -127,9 +116,9 @@ def normalize_ehrp_data(raw_dict):
         clean_date = re.sub(r'[-.]', '/', str(date_str).strip())
         parts = clean_date.split('/')
         if len(parts) == 3:
-            if len(parts[0]) == 4:
+            if len(parts[0]) == 4:  # YYYY/MM/DD -> DD/MM/YY
                 return f"{parts[2].zfill(2)}/{parts[1].zfill(2)}/{parts[0][-2:]}"
-            elif len(parts[2]) == 4:
+            elif len(parts[2]) == 4:  # DD/MM/YYYY -> DD/MM/YY
                 return f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2][-2:]}"
         return to_uppercase(date_str)
 
@@ -140,28 +129,36 @@ def normalize_ehrp_data(raw_dict):
         except (ValueError, TypeError):
             return "0.00"
 
-    bank_raw = raw_dict.get("bank", "")
-    bank_formatted = get_bank_clearing_code(bank_raw)
+    # 特殊邏輯：Name on ID 若無獨立提煉，則拼接 英文姓 + 英文名 (UPPERCASE)
+    surname = to_uppercase(raw_dict.get("surname"))
+    given_name = to_uppercase(raw_dict.get("given_name"))
+    raw_name_on_id = raw_dict.get("name_on_id", "")
+    
+    # 確保 Name on ID 不會誤填中文，必須是全英文大寫
+    if raw_name_on_id and not re.search(r'[\u4e00-\u9fff]', str(raw_name_on_id)):
+        name_on_id = to_uppercase(raw_name_on_id)
+    else:
+        name_on_id = f"{surname} {given_name}".strip()
 
     cleaned = {
         "header": {
             "employee_no": to_uppercase(raw_dict.get("employee_no"))
         },
         "particulars": {
-            "given_name": to_uppercase(raw_dict.get("given_name")),
-            "surname": to_uppercase(raw_dict.get("surname")),
-            "name_on_id": to_uppercase(raw_dict.get("name_on_id") or f"{raw_dict.get('surname', '')} {raw_dict.get('given_name', '')}".strip()),
-            "given_name_secondary": raw_dict.get("given_name_secondary", ""),
-            "surname_secondary": raw_dict.get("surname_secondary", ""),
+            "given_name": given_name,
+            "surname": surname,
+            "name_on_id": name_on_id,
+            "given_name_secondary": str(raw_dict.get("given_name_secondary", "")).strip(), # 中文名字
+            "surname_secondary": str(raw_dict.get("surname_secondary", "")).strip(),       # 中文姓氏
             "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
             "id_no": to_uppercase(raw_dict.get("id_no")),
             "alias": to_uppercase(raw_dict.get("alias")),
             "gender": to_uppercase(raw_dict.get("gender")),
             "date_of_birth": to_ehrp_date(raw_dict.get("date_of_birth")),
             "marital_status": to_uppercase(raw_dict.get("marital_status")),
-            "nationality": to_uppercase(raw_dict.get("nationality")),
+            "nationality": to_uppercase(raw_dict.get("nationality") or "HONG KONG SAR"),
             "race": to_uppercase(raw_dict.get("race")),
-            "country_of_birth": to_uppercase(raw_dict.get("country_of_birth")),
+            "country_of_birth": to_uppercase(raw_dict.get("country_of_birth") or "HONG KONG SAR"),
             "religion": to_uppercase(raw_dict.get("religion")),
             "telephone_home": re.sub(r'\D', '', str(raw_dict.get("telephone_home", ""))),
             "telephone_mobile": re.sub(r'\D', '', str(raw_dict.get("mobile") or raw_dict.get("telephone_mobile", ""))),
@@ -187,7 +184,7 @@ def normalize_ehrp_data(raw_dict):
             "commencement_date": to_ehrp_date(raw_dict.get("commencement_date")),
             "cessation_date": to_ehrp_date(raw_dict.get("cessation_date")),
             "confirmation_date": to_ehrp_date(raw_dict.get("confirmation_date")),
-            "bank": bank_formatted,
+            "bank": normalize_bank_name(raw_dict.get("bank", "")),
             "account_no": str(raw_dict.get("account_no", "")).strip(),
             "email": str(raw_dict.get("email", "")).strip().lower()
         },
@@ -208,7 +205,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (文字與掃描檔提煉引擎)
+# 7. 主介面邏輯 (文字提煉引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -223,50 +220,57 @@ if uploaded_file:
                         pdf_reader = PdfReader(uploaded_file)
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
+                    elif uploaded_file.name.endswith(".txt"):
+                        file_text = uploaded_file.read().decode("utf-8")
+                    else:
+                        file_text = f"檔名: {uploaded_file.name}"
 
-                    # 備用數據（若 PDF 屬掃描圖片）
                     if not file_text.strip():
-                        file_text = f"""
-                        [文件類型: 影印/掃描版月薪員工入職個人清單與申請表]
-                        檔案名稱: {uploaded_file.name}
-                        員工編號 (Employee No): E26073
-                        中文姓名: 趙榮發
-                        英文姓名: Chiu Wing Faat
-                        身份證英文全名: LAW CHI KEI JACKY
-                        身分證號碼: P932569(0)
-                        出生日期: 1989年01月04日 (04/01/89)
-                        國籍: HONG KONG SAR
-                        婚姻狀況: MARRIED
-                        性別: MALE
-                        電話: 6422-7585
-                        電郵: ggooddxx@yahoo.com.hk
-                        地址 Line 1: Room G 8/F Block Front Wing Lung Building 234 Castle Peak Road Sham Shui Po KLN, Hong Kong
-                        職銜 (Designation): SR HR MANAGER / 發展經理
-                        部門 (Department): HRD / 寫字樓
-                        職級 (Rank): R8
-                        級別 (Grade): G12
-                        薪金點 (Point): 102
-                        擬入職/生效日期: 2026-07-20 (20/07/26)
-                        底薪 (Salary): 44810.00
-                        銀行名稱: HANG SENG BANK
-                        銀行戶口號碼: 2419411158
-                        配偶/緊急聯絡人: WIFE, SUN JAMIE, 9727-3758
-                        學歷: BACHELOR, MASTER
-                        """
+                        file_text = f"檔案名稱: {uploaded_file.name} (請儘量從此入職表格/CV 中提煉個人資料)"
 
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
-                    請儘可能完整提取以下欄位：
-                    - employee_no, given_name, surname, name_on_id, given_name_secondary, surname_secondary, id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion, telephone_home, mobile, secondary_contact, employment_status, probation_months
-                    - address_line_1, address_line_2, address_line_3, f_post_code
-                    - designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme, position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
-                    - salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
-                    - education (清單陣列，包含 qualifications, major_in, institution, year_grad)
-                    - prof_cert (清單陣列，包含 cert_name, institution, year_obtain)
-                    - next_of_kin (清單陣列，包含 relationship, surname, given_name, pri_contact)
-                    - prev_employment (清單陣列，包含 company, date_join, date_left, designation, last_drawn)
+                    請嚴格按照以下微觀欄位名稱輸出：
+                    Header: employee_no
+                    Particulars: 
+                      - given_name (英文名, 如 CHI KEI)
+                      - surname (英文姓, 如 LAW)
+                      - name_on_id (身份證英文全名, 如 LAW CHI KEI JACKY)
+                      - given_name_secondary (中文名字, 如 子淇)
+                      - surname_secondary (中文姓氏, 如 羅)
+                      - id_type (如 LOCAL/PR)
+                      - id_no (身份證號碼, 如 A123456(1))
+                      - alias (別名/英文名, 如 JACKY)
+                      - gender (MALE/FEMALE)
+                      - date_of_birth (出生日期)
+                      - marital_status (MARRIED/SINGLE)
+                      - nationality (如 HONG KONG SAR)
+                      - race, country_of_birth, religion
+                      - telephone_home, mobile, secondary_contact
+                      - employment_status (如 ACTIVE)
+                      - probation_months (如 3)
+                    Address: address_line_1, address_line_2, address_line_3, f_post_code
+                    Employment: 
+                      - designation (職銜, 如 SR HR MANAGER)
+                      - effective_date_designation, department (部門 Code, 如 HRD)
+                      - employee_type (如 EMPLOYEES), staff_group, employee_class (如 CLASS B), employment_scheme (如 SALARY)
+                      - position (如 SENIOR MANAGER), commencement_date, cessation_date, confirmation_date
+                      - bank (銀行英文簡稱, 如 HSBC, HANG SENG, BOC)
+                      - account_no (銀行戶口號碼, 如 004-512-8-010333)
+                      - email
+                    Salary: 
+                      - salary (底薪數字, 如 80300.00)
+                      - variable_salary, daily_rate, add_rate
+                      - rank (職級 Code, 如 R9, R8)
+                      - grade (級別, 如 14, 12)
+                      - point (薪金點, 如 141, 102)
+                      - effective_date (生效日期)
+                    Education (陣列): [{qualifications, major_in, institution, year_grad}]
+                    Prof_Cert (陣列): [{cert_name, institution, year_obtain}]
+                    Next_Of_Kin (陣列): [{relationship, surname, given_name, pri_contact}]
+                    Prev_Employment (陣列): [{company, date_join, date_left, designation, last_drawn}]
 
-                    必須只回傳 valid JSON 物件，不要有 Markdown。
+                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
                     """
 
                     if active_token.startswith("gsk_"):
@@ -325,13 +329,12 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
 
-# 8. 顯示與對齊 eHRP 界面的 Tab 區塊
+# 8. 顯示與對齊 eHRP 界面的 Tab 區塊 (完全對齊真版 UI 排列)
 if "normalized_json" in st.session_state:
     data = st.session_state["normalized_json"]
     
     st.markdown(f"### 🆔 EMPLOYEE NO: `{data['header']['employee_no'] or 'N/A'}`")
     
-    # 對齊真版 eHRP 的完整 Tab
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "Particulars", "Address", "Employment", "Salary", 
         "Education & Prof Cert", "Next Of Kin", "Prev. Employment", "JSON 數據庫"
@@ -412,7 +415,7 @@ if "normalized_json" in st.session_state:
             st.text_input("ADD. RATE", value=data["salary"]["add_rate"], disabled=True)
             st.text_input("EFFECTIVE DATE", value=data["salary"]["effective_date"], disabled=True)
 
-    # 5. Education & Prof Cert Tab (Data Grid 視覺化)
+    # 5. Education & Prof Cert Tab
     with tab5:
         st.subheader("🎓 Education (學歷紀錄)")
         if data["education"]:
@@ -426,15 +429,15 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無專業證書紀錄")
 
-    # 6. Next Of Kin Tab (緊急聯絡人)
+    # 6. Next Of Kin Tab
     with tab6:
-        st.subheader("👨‍👩‍👧 Next Of Kin (緊急聯絡人 / 配偶)")
+        st.subheader("👨‍👩‍👧 Next Of Kin (緊急聯絡人)")
         if data["next_of_kin"]:
             st.dataframe(pd.DataFrame(data["next_of_kin"]), use_container_width=True)
         else:
             st.info("尚無緊急聯絡人紀錄")
 
-    # 7. Prev. Employment Tab (過往工作履歷)
+    # 7. Prev. Employment Tab
     with tab7:
         st.subheader("💼 Prev. Employment (過往工作履歷)")
         if data["prev_employment"]:
