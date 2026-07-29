@@ -41,7 +41,8 @@ BANK_MAP = {
 }
 
 def normalize_bank_name(bank_str):
-    if not bank_name_str := str(bank_str).strip().upper():
+    bank_name_str = str(bank_str).strip().upper() if bank_str else ""
+    if not bank_name_str:
         return ""
     for std_name, keywords in BANK_MAP.items():
         for kw in keywords:
@@ -105,7 +106,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數 (動態資料清洗，不寫死任何特定個案)
+# 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -116,9 +117,9 @@ def normalize_ehrp_data(raw_dict):
         clean_date = re.sub(r'[-.]', '/', str(date_str).strip())
         parts = clean_date.split('/')
         if len(parts) == 3:
-            if len(parts[0]) == 4:  # YYYY/MM/DD -> DD/MM/YY
+            if len(parts[0]) == 4:
                 return f"{parts[2].zfill(2)}/{parts[1].zfill(2)}/{parts[0][-2:]}"
-            elif len(parts[2]) == 4:  # DD/MM/YYYY -> DD/MM/YY
+            elif len(parts[2]) == 4:
                 return f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2][-2:]}"
         return to_uppercase(date_str)
 
@@ -129,12 +130,10 @@ def normalize_ehrp_data(raw_dict):
         except (ValueError, TypeError):
             return "0.00"
 
-    # 特殊邏輯：Name on ID 若無獨立提煉，則拼接 英文姓 + 英文名 (UPPERCASE)
     surname = to_uppercase(raw_dict.get("surname"))
     given_name = to_uppercase(raw_dict.get("given_name"))
     raw_name_on_id = raw_dict.get("name_on_id", "")
     
-    # 確保 Name on ID 不會誤填中文，必須是全英文大寫
     if raw_name_on_id and not re.search(r'[\u4e00-\u9fff]', str(raw_name_on_id)):
         name_on_id = to_uppercase(raw_name_on_id)
     else:
@@ -148,8 +147,8 @@ def normalize_ehrp_data(raw_dict):
             "given_name": given_name,
             "surname": surname,
             "name_on_id": name_on_id,
-            "given_name_secondary": str(raw_dict.get("given_name_secondary", "")).strip(), # 中文名字
-            "surname_secondary": str(raw_dict.get("surname_secondary", "")).strip(),       # 中文姓氏
+            "given_name_secondary": str(raw_dict.get("given_name_secondary", "")).strip(),
+            "surname_secondary": str(raw_dict.get("surname_secondary", "")).strip(),
             "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
             "id_no": to_uppercase(raw_dict.get("id_no")),
             "alias": to_uppercase(raw_dict.get("alias")),
@@ -205,7 +204,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (文字提煉引擎)
+# 7. 主介面邏輯
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -233,38 +232,15 @@ if uploaded_file:
                     請嚴格按照以下微觀欄位名稱輸出：
                     Header: employee_no
                     Particulars: 
-                      - given_name (英文名, 如 CHI KEI)
-                      - surname (英文姓, 如 LAW)
-                      - name_on_id (身份證英文全名, 如 LAW CHI KEI JACKY)
-                      - given_name_secondary (中文名字, 如 子淇)
-                      - surname_secondary (中文姓氏, 如 羅)
-                      - id_type (如 LOCAL/PR)
-                      - id_no (身份證號碼, 如 A123456(1))
-                      - alias (別名/英文名, 如 JACKY)
-                      - gender (MALE/FEMALE)
-                      - date_of_birth (出生日期)
-                      - marital_status (MARRIED/SINGLE)
-                      - nationality (如 HONG KONG SAR)
-                      - race, country_of_birth, religion
-                      - telephone_home, mobile, secondary_contact
-                      - employment_status (如 ACTIVE)
-                      - probation_months (如 3)
+                      - given_name, surname, name_on_id, given_name_secondary, surname_secondary
+                      - id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion
+                      - telephone_home, mobile, secondary_contact, employment_status, probation_months
                     Address: address_line_1, address_line_2, address_line_3, f_post_code
                     Employment: 
-                      - designation (職銜, 如 SR HR MANAGER)
-                      - effective_date_designation, department (部門 Code, 如 HRD)
-                      - employee_type (如 EMPLOYEES), staff_group, employee_class (如 CLASS B), employment_scheme (如 SALARY)
-                      - position (如 SENIOR MANAGER), commencement_date, cessation_date, confirmation_date
-                      - bank (銀行英文簡稱, 如 HSBC, HANG SENG, BOC)
-                      - account_no (銀行戶口號碼, 如 004-512-8-010333)
-                      - email
+                      - designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme
+                      - position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
                     Salary: 
-                      - salary (底薪數字, 如 80300.00)
-                      - variable_salary, daily_rate, add_rate
-                      - rank (職級 Code, 如 R9, R8)
-                      - grade (級別, 如 14, 12)
-                      - point (薪金點, 如 141, 102)
-                      - effective_date (生效日期)
+                      - salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
                     Education (陣列): [{qualifications, major_in, institution, year_grad}]
                     Prof_Cert (陣列): [{cert_name, institution, year_obtain}]
                     Next_Of_Kin (陣列): [{relationship, surname, given_name, pri_contact}]
@@ -329,7 +305,7 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
 
-# 8. 顯示與對齊 eHRP 界面的 Tab 區塊 (完全對齊真版 UI 排列)
+# 8. 顯示與對齊 eHRP 界面的 Tab 區塊
 if "normalized_json" in st.session_state:
     data = st.session_state["normalized_json"]
     
