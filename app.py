@@ -4,7 +4,10 @@ import json
 import re
 import requests
 import base64
+import fitz  # PyMuPDF 用於渲染掃描版 PDF 頁面為圖片
 from pypdf import PdfReader
+from PIL import Image
+import io
 
 # 1. 網頁頁面設定
 st.set_page_config(
@@ -93,7 +96,7 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **掃描檔影印本自動辨識**：支援影像與照片提煉。
+      * **掃描檔影印本自動辨識**：支援影像與照片 OCR 提煉。
       * **eHRP 系統介面 1:1 精確對齊**：欄位命名與排列完全匹配真實 eHRP 系統。
       * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
     """)
@@ -206,7 +209,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯
+# 7. 主介面邏輯 (包含純圖片與文字雙軌解析)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -214,26 +217,50 @@ if uploaded_file:
         if not active_token:
             st.error("請先確保 API Key / Token 載入成功！")
         else:
-            with st.spinner("AI 正在解析文件內容中..."):
+            with st.spinner("AI 正在進行影像 OCR 與文字解析中..."):
                 try:
                     file_text = ""
+                    base64_images = []
+
+                    # 1. 嘗試提煉向量文字
                     if uploaded_file.name.endswith(".pdf"):
-                        pdf_reader = PdfReader(uploaded_file)
+                        pdf_bytes = uploaded_file.read()
+                        pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
+                        
+                        # 2. 若提煉文字為空（影印機掃描檔），使用 PyMuPDF 將前 3 頁轉成圖片
+                        if not file_text.strip():
+                            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                            for i in range(min(3, len(doc))):
+                                page = doc[i]
+                                pix = page.get_pixmap(dpi=150)
+                                img_bytes = pix.tobytes("png")
+                                b64 = base64.b64encode(img_bytes).decode("utf-8")
+                                base64_images.append(b64)
+
+                    elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+                        img_bytes = uploaded_file.read()
+                        b64 = base64.b64encode(img_bytes).decode("utf-8")
+                        base64_images.append(b64)
+
                     elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
-                    else:
-                        file_text = f"檔名: {uploaded_file.name}"
 
                     system_prompt = """
-                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
+                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件或圖片中提取員工入職資料，並回傳 JSON 物件。
                     請嚴格按照以下微觀欄位名稱輸出：
                     Header: employee_no
-                    Particulars: given_name, surname, name_on_id, given_name_secondary, surname_secondary, id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion, telephone_home, mobile, secondary_contact, employment_status, probation_months
+                    Particulars: 
+                      - given_name, surname, name_on_id, given_name_secondary, surname_secondary
+                      - id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion
+                      - telephone_home, mobile, secondary_contact, employment_status, probation_months
                     Address: address_line_1, address_line_2, address_line_3, f_post_code
-                    Employment: designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme, position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
-                    Salary: salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
+                    Employment: 
+                      - designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme
+                      - position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
+                    Salary: 
+                      - salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
                     Education (陣列): [{qualifications, major_in, institution, year_grad}]
                     Prof_Cert (陣列): [{cert_name, institution, year_obtain}]
                     Next_Of_Kin (陣列): [{relationship, surname, given_name, pri_contact}]
@@ -242,28 +269,48 @@ if uploaded_file:
                     若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
                     """
 
-                    # 發送 API 請求
+                    # 構建消息 Payload (支援文字與圖片多模態 Vision)
+                    user_content = []
+                    if file_text.strip():
+                        user_content.append({"type": "text", "text": f"請解析以下文件文字並輸出 JSON：\n\n{file_text}"})
+                    elif base64_images:
+                        user_content.append({"type": "text", "text": "請辨識分析以下掃描版入職表格/身分證圖片並提煉完整個人資料 JSON："})
+                        for b64 in base64_images:
+                            user_content.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{b64}"}
+                            })
+                    else:
+                        user_content.append({"type": "text", "text": f"檔名: {uploaded_file.name}，請盡量提煉資料。"})
+
+                    # API 呼叫發送
                     if active_token.startswith("gsk_"):
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
-                        model_name = "llama-3.3-70b-versatile"
+                        model_name = "llama-3.2-11b-vision-preview" if base64_images else "llama-3.3-70b-versatile"
                         headers = {"Authorization": f"Bearer {active_token}", "Content-Type": "application/json"}
                         payload = {
                             "model": model_name,
                             "messages": [
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"請解析以下文件內容並輸出 JSON：\n\n{file_text}"}
+                                {"role": "user", "content": user_content}
                             ],
                             "response_format": {"type": "json_object"}
                         }
-                        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
 
                     elif active_token.startswith("AIzaSy"):
                         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
+                        parts = [{"text": system_prompt}]
+                        if file_text.strip():
+                            parts.append({"text": file_text})
+                        for b64 in base64_images:
+                            parts.append({"inline_data": {"mime_type": "image/png", "data": b64}})
+                        
                         payload = {
-                            "contents": [{"parts": [{"text": f"{system_prompt}\n\n請解析以下文件內容並輸出 JSON：\n\n{file_text}"}]}],
+                            "contents": [{"parts": parts}],
                             "generationConfig": {"response_mime_type": "application/json"}
                         }
-                        response = requests.post(api_url, json=payload, timeout=30)
+                        response = requests.post(api_url, json=payload, timeout=45)
 
                     else:
                         if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
@@ -278,11 +325,11 @@ if uploaded_file:
                             "model": model_name,
                             "messages": [
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"請解析以下文件內容並輸出 JSON：\n\n{file_text}"}
+                                {"role": "user", "content": user_content}
                             ],
                             "response_format": {"type": "json_object"}
                         }
-                        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
 
                     if response.status_code == 200:
                         if active_token.startswith("AIzaSy"):
