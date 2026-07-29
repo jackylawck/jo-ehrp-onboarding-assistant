@@ -33,7 +33,7 @@ elif "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
     secret_token = st.secrets["OPENAI_API_KEY"]
     token_source = "OPENAI_API_KEY"
 
-# 3. 香港常見銀行名稱標準化對照表
+# 3.1 香港常見銀行名稱標準化對照表
 BANK_MAP = {
     "HSBC": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行", "004"],
     "HANG SENG": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行", "024"],
@@ -53,6 +53,45 @@ def normalize_bank_name(bank_str):
             if kw in bank_name_str:
                 return std_name
     return bank_name_str
+
+# 3.2 部門名稱標準化對照表 (名稱 → 系統代碼)
+DEPT_MAP = {
+    "QSD": "QSD", "計量組": "QSD", "QUANTITY SURVEY": "QSD", "QUANTITY SURVEY SECTION": "QSD",
+    "EGD": "EGD", "工程組": "EGD", "ENGINEERING": "EGD", "ENGINEERING AND DESIGN": "EGD",
+    "PVD": "PVD", "規劃驗證組": "PVD", "PLANNING VALIDATION": "PVD",
+    "CPD": "CPD", "發判組": "CPD", "CONTRACTUAL": "CPD", "CONTRACTUAL AND PROCUREMENT": "CPD",
+    "POD": "POD", "物控組": "POD", "PURCHASING": "POD", "PURCHASING AND ORDERING": "POD",
+    "PCD": "PCD", "項目組": "PCD", "PROJECT CONTROL": "PCD",
+    "PMD": "PMD", "施工組": "PMD", "PROJECT MANAGEMENT": "PMD", "PROJECT MANAGEMENT SECTION": "PMD",
+    "SED": "SED", "安環組": "SED", "SAFETY": "SED", "SAFETY AND ENVIRONMENTAL": "SED",
+    "WMD": "WMD", "倉管組": "WMD", "WAREHOUSE": "WMD", "WAREHOUSE MANAGEMENT": "WMD",
+    "ACD": "ACD", "會計組": "ACD", "ACCOUNTS": "ACD", "ACCOUNTS SECTION": "ACD",
+    "ADD": "ADD", "行政組": "ADD", "ADMINISTRATION": "ADD", "ADMINISTRATION SECTION": "ADD",
+    "HRD": "HRD", "人力資源組": "HRD", "HUMAN RESOURCES": "HRD", "HUMAN RESOURCES SECTION": "HRD",
+    "OAD": "OAD", "營運審計組": "OAD", "OPERATIONS AUDIT": "OAD", "OPERATIONS AUDIT SECTION": "OAD",
+    "HOF": "HOF", "寫字樓": "HOF", "寫字楼": "HOF", "HEAD OFFICE": "HOF", "OFFICE": "HOF",
+}
+
+def normalize_dept_name(dept_str):
+    """將部門名稱標準化為系統代碼 (如 '寫字樓' → 'HOF')"""
+    if not dept_str:
+        return ""
+    
+    dept_clean = str(dept_str).strip()
+    dept_upper = dept_clean.upper()
+    
+    # 1. 直接比對對照表 (不區分大小寫)
+    for key, code in DEPT_MAP.items():
+        if dept_upper == key.upper():
+            return code
+    
+    # 2. 部分比對 (例如 "寫字樓經理" → "HOF")
+    for key, code in DEPT_MAP.items():
+        if key.upper() in dept_upper:
+            return code
+    
+    # 3. 若都無法對應，保留原始值轉大寫
+    return dept_upper
 
 # 4. 主頁面標題區塊
 st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
@@ -97,6 +136,7 @@ with st.sidebar:
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
       * **指向性資料來源核對**：依據身份證、銀行卡與僱傭合約之權重分配，防範資料衝突。
+      * **部門代碼自動映射**：支援中文部門名稱無縫轉化為 eHRP 代碼 (如 HOF、PMD)。
       * **高精準 Vision OCR**：杜絕錯字幻視，不確定欄位寧缺勿濫。
       * **eHRP 系統介面 1:1 精確對齊**。
     """)
@@ -185,7 +225,7 @@ def normalize_ehrp_data(raw_dict):
         "employment": {
             "designation": to_uppercase(raw_dict.get("designation")),
             "effective_date_designation": to_ehrp_date(raw_dict.get("effective_date_designation")),
-            "department": to_uppercase(raw_dict.get("department")),
+            "department": normalize_dept_name(raw_dict.get("department")),
             "employee_type": to_uppercase(raw_dict.get("employee_type") or "EMPLOYEES"),
             "staff_group": to_uppercase(raw_dict.get("staff_group")),
             "employee_class": to_uppercase(raw_dict.get("employee_class")),
@@ -265,7 +305,7 @@ if uploaded_file:
                     status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
                     status_box.write("🧠 正在根據「指向性來源原則」進行交叉比對與精準提煉...")
 
-                    # 完全通用的提示詞，無硬編碼 PII
+                    # 完全通用的提示詞，加入銀行與部門的增強引導
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
@@ -274,13 +314,13 @@ if uploaded_file:
                     1. 核心入職條件：職銜 (Designation)、部門 (Department)、薪金 (Salary)、職級/級別 (Rank/Grade/Point)、生效日期 -> 必須以「月薪僱傭合約」及「面試評估表/錄用條款」為絕對準則。
                     2. 個人身份核對：
                        - 身份證英文全名 (name_on_id)、身份證號碼 (id_no)、出生日期、性別 -> 必須以「香港身份證副本」圖像為絕對準則。
-                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」卡面資訊為準。
+                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」卡面資訊為準。若無銀行卡影本，請檢視合約中有無『經銀行自動轉賬』字樣，並嘗試從上下文推斷銀行名稱（如匯豐、恒生、中銀等），若無法確定則留空。
                        - 居住地址 (address) -> 優先參考「住址證明影印本」，其次為「職位申請表」。
                     3. 補充背景資料：聯絡電話、電郵、緊急聯絡人 (Next of Kin)、學歷 (Education)、過往履歷 (Prev_Employment) -> 請從「職位申請表」或「CV」中提取。
 
                     【極重要原則 - 零猜測/零幻視】
                     1. 不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
-                    2. 部門請嚴格辨識原文，若模糊無法確定請填 ""。
+                    2. 部門請嚴格辨識原文，若是「寫字樓」或「寫字楼」，請精準提取，切勿錯看成不存在的字詞，若模糊無法確定請填 ""。
 
                     【欄位結構】
                     - employee_no: 員工編號 / 僱員編號
@@ -289,6 +329,7 @@ if uploaded_file:
                     - given_name_secondary: 中文名字
                     - surname_secondary: 中文姓氏
                     - designation: 職銜
+                    - department: 所屬部門 / 組別
                     - commencement_date: 生效日期 / 受僱日期
                     - bank: 結算銀行名稱
                     - account_no: 銀行帳號
