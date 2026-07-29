@@ -94,7 +94,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     st.markdown("""
     * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
     * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
-    * **指向性核對原則 (Source Grounding)**：嚴格以合約第 3 條核對條款、以證件核對身份，輔以申請表補充緊急聯絡人。
+    * **指向性核對原則 (Source Grounding)**：合約定條款，證件定身份，申請表/CV及證件副本定學歷、履歷與專業證書。
     """)
 
 # 5. 側邊欄 (Sidebar)
@@ -126,7 +126,7 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **合約第 3 條指向性提取**：精準提煉 Rank、Grade、Point 及底薪。
+      * **多源指向性核對**：合約、證件、申請表、CV 及專業證書副本多軌交叉校驗。
       * **中文姓名自動拆分**：自動校正中文姓氏與名字欄位錯位。
       * **部門代碼與銀行名稱校正**：自動映射標準代碼與校正 OCR 錯字。
     """)
@@ -256,7 +256,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (精準指向性 Prompt)
+# 7. 主介面邏輯 (精準指向性 Prompt 升級)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -304,52 +304,42 @@ if uploaded_file:
                         file_text = uploaded_file.read().decode("utf-8")
 
                     status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
-                    status_box.write("🧠 正在根據「合約第 3 條與指向性來源原則」精準提煉...")
+                    status_box.write("🧠 正在根據「多源指向性核對原則」交叉校驗學歷、履歷與專業證書...")
 
-                    # 【指向合約第 3 條】核心 Prompt
+                    # 【強化 Education, Prof Cert, Prev Employment 來源】的核心 Prompt
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
                     【資料來源優先級與指向性核對原則】
                     1. 僱傭條款與薪酬結構 (salary, rank, grade, point)：
-                       - **必須明確從「東淦工程有限公司 月薪僱傭合約」第 3 條「工資及職級」提煉**！
-                       - 合約第 3 條標準格式為：「每月底薪$XX,XXX港元; 薪金計劃支薪點XXX; 級別GXX: 職級 RXX」
-                       - 請精準提取：
-                         * salary: 每月底薪數字 (如 44810.00)
-                         * point: 薪金計劃支薪點 (如 102)
-                         * grade: 級別 (如 G12 或 12)
-                         * rank: 職級 (如 R8)
-                       - 受僱日期 (commencement_date): 從合約第 1 條「受僱日期」提煉 (如 2026年7月20日 -> 20/07/26)。
+                       - **必須明確從「東淦工程有限公司 月薪僱傭合約」第 3 條「工資及職級」及面試評估表提煉**。
+                       - 例如：salary: 44810.00, point: 102, grade: G12, rank: R8。
 
                     2. 個人身份與中文姓名拆分：
-                       - 英文姓名與身份證號碼 -> 必須以「香港身份證副本」為絕對準則 (given_name: WING FAAT, surname: CHIU)。
-                       - 中文姓名拆分 -> surname_secondary 填寫「中文姓氏」(例如 趙)，given_name_secondary 填寫「中文名字」(例如 榮發)，切勿把全名擠在名字欄！
+                       - 英文姓名與身份證號碼 -> 必須以「香港身份證副本」為絕對準則。
+                       - 中文姓名拆分 -> surname_secondary 填「中文姓氏」(如 趙)，given_name_secondary 填「中文名字」(如 榮發)。
 
                     3. 銀行資料 (bank, account_no)：
-                       - 必須以「銀行卡/提款卡影印本」卡面文字或「職員證簽收及扣薪授權書」上的戶口號碼為準。銀行名稱若是「恒生銀行 / HANG SENG BANK」，請填寫 HANG SENG，切勿拼錯為 YANG SENG。
+                       - 必須以「銀行卡影印本」或「職員證簽收及扣薪授權書」為準 (如 HANG SENG, 2419411158)。
 
                     4. 緊急聯絡人 (next_of_kin)：
                        - **必須優先從「職位申請表」中的「緊急聯絡人」區塊提取** (例如: relationship: MOTHER, surname: 陳, given_name: 月笑, pri_contact: 97273758)。
+
+                    5. 學歷、專業證書與過往履歷 (Education, Prof Cert, Prev Employment)：
+                       - **學歷紀錄 (education)**：請從「CV」或「職位申請表 (HRF-006)」的「學歷及資格」區塊提煉 (包含 qualifications, major_in, institution, year_grad)。
+                       - **過往工作履歷 (prev_employment)**：請從「CV」或「職位申請表 (HRF-006)」的「工作履歷」區塊提煉 (包含 company, date_join, date_left, designation, last_drawn)。
+                       - **專業證書 (prof_cert)**：**請仔細檢視上傳文件中的所有專業證書副本圖像** (例如: 急救證 Certificate in First Aid, 吊運安全督導員 Lifting Safety, 電工證 Certificate in Electrician, 安全督導員 Safety Supervisors, 金屬工/鋼架工 Master/Test Cert, 平安卡/工人註冊證等)，將每一張證書整理進 prof_cert 陣列 (包含 cert_name, institution, year_obtain)。
 
                     【極重要原則 - 零猜測/零幻視】
                     不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
 
                     【欄位結構】
-                    - employee_no: 員工編號 / 僱員編號 (如 E26073)
-                    - given_name: 英文名 (如 WING FAAT)
-                    - surname: 英文姓 (如 CHIU)
-                    - given_name_secondary: 中文名字 (如 榮發)
-                    - surname_secondary: 中文姓氏 (如 趙)
-                    - designation: 職銜 (如 發展經理)
-                    - department: 所屬部門 / 組別 (如 寫字樓 / HOF)
-                    - commencement_date: 生效日期 / 受僱日期
-                    - bank: 結算銀行名稱 (如 HANG SENG, HSBC, BOC)
-                    - account_no: 銀行帳號 (如 2419411158)
-                    - salary: 每月底薪 / 工資金額
-                    - rank: 職級 (如 R8)
-                    - grade: 級別 (如 G12)
-                    - point: 薪金點 / 支薪點 (如 102)
-                    - address_line_1, address_line_2, address_line_3: 居住地址
+                    - employee_no: 員工編號
+                    - given_name, surname, given_name_secondary, surname_secondary
+                    - designation, department, commencement_date, bank, account_no, salary, rank, grade, point
+                    - address_line_1, address_line_2, address_line_3
+                    - education (陣列): [{qualifications, major_in, institution, year_grad}]
+                    - prof_cert (陣列): [{cert_name, institution, year_obtain}]
                     - next_of_kin (陣列): [{relationship, surname, given_name, pri_contact}]
                     - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}]
 
@@ -357,7 +347,7 @@ if uploaded_file:
                     """
 
                     if base64_images:
-                        user_content = [{"type": "text", "text": "請仔細辨識以下文件與證件副本，並嚴格遵循「合約第 3 條與指向性核對原則」提煉 eHRP 個人資料 JSON："}]
+                        user_content = [{"type": "text", "text": "請仔細辨識以下文件、證件與專業證書副本，並嚴格遵循指向性原則提煉 eHRP 個人資料 JSON："}]
                         for b64 in base64_images:
                             user_content.append({
                                 "type": "image_url",
