@@ -19,11 +19,47 @@ if "GITHUB_TOKEN" in st.secrets:
 elif "OPENAI_API_KEY" in st.secrets:
     secret_token = st.secrets["OPENAI_API_KEY"]
 
-# 3. 主頁面標題區塊
-st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
-st.subheader("📋 eHRP 入職資料智能助手")
+# 3. 香港常見銀行 Clearing Code 對照表 (Bank Mapping Dictionary)
+BANK_CLEARING_CODES = {
+    "004": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行"],
+    "024": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行"],
+    "012": ["BANK OF CHINA", "BOC", "中銀", "中國銀行"],
+    "003": ["STANDARD CHARTERED", "SCB", "渣打", "渣打銀行"],
+    "006": ["CITIBANK", "CITI", "花旗", "花旗銀行"],
+    "015": ["BANK OF EAST ASIA", "BEA", "東亞", "東亞銀行"],
+    "025": ["SHANGHAI COMMERCIAL BANK", "上商", "上海商業銀行"],
+    "016": ["DBS", "DBS BANK", "星展", "星展銀行"],
+    "020": ["WING LUNG", "CMB WING LUNG", "招商永隆", "永隆"],
+    "012": ["BOC", "BANK OF CHINA (HONG KONG)"],
+    "072": ["INDUSTRIAL AND COMMERCIAL BANK OF CHINA", "ICBC", "工銀亞洲", "中國工商銀行"],
+    "040": ["DAH SING", "大新", "大新銀行"],
+    "393": ["ANT BANK", "螞蟻銀行"],
+    "387": ["ZA BANK", "眾安銀行"],
+    "388": ["MOX", "MOX BANK"]
+}
 
-# 藍色內部數據安全保障 Notification Box
+def get_bank_clearing_code(bank_name):
+    """將提取到的銀行名稱自動對照轉為 3 位數 Clearing Code"""
+    if not bank_name:
+        return ""
+    
+    clean_name = str(bank_name).strip().upper()
+    
+    # 若本身已經是 3 位數字
+    if re.match(r'^\d{3}$', clean_name):
+        return clean_name
+        
+    for code, keywords in BANK_CLEARING_CODES.items():
+        for kw in keywords:
+            if kw in clean_name:
+                return f"{code} ({clean_name})"
+                
+    return clean_name
+
+# 4. 主頁面標題區塊
+st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
+st.subheader("📋 eHRP 入職資料智能助手 (連香港銀行 Clearing Code 自動對照)")
+
 st.info("🔒 **內部數據安全保障**：本系統採用純本地 Session 數據標準化技術，您上傳的入職表格/CV 文件只會暫存在當前網頁會話中。**當您關閉或重新整理網頁時，數據會立即被物理銷毀**，絕對不會儲存到互聯網上，請放心使用。")
 
 with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", expanded=False):
@@ -33,7 +69,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     * **人機協同 (Human-in-the-Loop)**：格式清洗後提供專員即時校對，確認無誤後方可複製/注入 eHRP。
     """)
 
-# 4. 側邊欄 (Sidebar) - 雙模式金鑰、HR 管治特色與品牌宣傳 Footer
+# 5. 側邊欄 (Sidebar)
 with st.sidebar:
     st.header("⚙️ 系統設定")
     
@@ -44,57 +80,39 @@ with st.sidebar:
     )
     
     active_token = ""
-    
     if key_mode == "使用開源公共免費額度":
         if secret_token:
-            st.info("""
-            🌱 **開源公共資源已載入** (來自後端 Secrets)。歡迎自由體驗！
-            若需高頻批量篩選或處理高度機密履歷，建議切換為自備 Key 以確保最高安全性與不限次數體驗。
-            """)
+            st.info("🌱 **開源公共資源已載入** (來自後端 Secrets)。歡迎自由體驗！")
             active_token = secret_token
         else:
             st.error("⚠️ 後端未檢測到 Secrets Token，請切換至「自備 API Key」模式。")
-            
-    else:  # 使用自備 Key 模式
-        user_key = st.text_input(
-            "請輸入自備 AI API Key / GITHUB_TOKEN：",
-            type="password",
-            help="此 Key 僅存於您目前的瀏覽器 Session，不會上傳至任何 GitHub 或第三方伺服器。"
-        )
+    else:
+        user_key = st.text_input("請輸入自備 AI API Key / GITHUB_TOKEN：", type="password")
         if user_key:
-            st.success("🔒 自備 Key 已成功套用 (僅限本次 Session)")
+            st.success("🔒 自備 Key 已成功套用")
             active_token = user_key
-        else:
-            st.warning("請輸入您的 Key 以解鎖功能。")
 
     st.divider()
 
     st.markdown("### 🛡️ 數據安全與進階 HR 管治特色")
-    st.markdown("##### 🔐 企業隱私防護：")
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **多 CV 獨立解析 (Tabbed UI)**：批量上傳，獨立分頁精準生成決策報告。
-      * **深度 DEI 詞彙偵測**：具體揪出年齡、性別等潛在偏見字眼並提供修正。
-      * **決策報告一鍵匯出**：支援將 AI 分析結果匯出為 Markdown 報告。
+      * **銀行編號 (Clearing Code) 自動轉化**：支援自動對照 3 位數銀行代號。
+      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、金額小數點。
     """)
     
     st.divider()
 
-    uploaded_file = st.file_uploader(
-        "上傳新員工入職表格 / CV", 
-        type=["pdf", "docx", "xlsx", "txt", "png", "jpg"]
-    )
+    uploaded_file = st.file_uploader("上傳新員工入職表格 / CV", type=["pdf", "docx", "xlsx", "txt", "png", "jpg"])
 
     st.divider()
 
     st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
-    st.markdown("""
-    ⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。
-    """)
+    st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 5. eHRP 格式清洗核心函數 (Data Normalizer)
+# 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -105,9 +123,9 @@ def normalize_ehrp_data(raw_dict):
         clean_date = re.sub(r'[-.]', '/', str(date_str).strip())
         parts = clean_date.split('/')
         if len(parts) == 3:
-            if len(parts[0]) == 4:  # YYYY/MM/DD -> DD/MM/YY
+            if len(parts[0]) == 4:
                 return f"{parts[2].zfill(2)}/{parts[1].zfill(2)}/{parts[0][-2:]}"
-            elif len(parts[2]) == 4:  # DD/MM/YYYY -> DD/MM/YY
+            elif len(parts[2]) == 4:
                 return f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2][-2:]}"
         return to_uppercase(date_str)
 
@@ -117,6 +135,10 @@ def normalize_ehrp_data(raw_dict):
             return f"{val:.2f}"
         except (ValueError, TypeError):
             return "0.00"
+
+    # 處理銀行編號 Mapping
+    bank_raw = raw_dict.get("bank", "")
+    bank_formatted = get_bank_clearing_code(bank_raw)
 
     cleaned = {
         "particulars": {
@@ -140,7 +162,7 @@ def normalize_ehrp_data(raw_dict):
             "designation": to_uppercase(raw_dict.get("designation")),
             "department": to_uppercase(raw_dict.get("department")),
             "commencement_date": to_ehrp_date(raw_dict.get("commencement_date")),
-            "bank": to_uppercase(raw_dict.get("bank")),
+            "bank": bank_formatted,
             "account_no": str(raw_dict.get("account_no", "")).strip(),
             "email": str(raw_dict.get("email", "")).strip().lower()
         },
@@ -151,7 +173,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 6. 主介面邏輯 (Main UI) - 動態解析上傳檔案
+# 7. 主介面邏輯
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -159,9 +181,8 @@ if uploaded_file:
         if not active_token:
             st.error("請先選擇 AI 金鑰模式並確保金鑰載入成功！")
         else:
-            with st.spinner("AI 正在解析文件內文並清洗格式中..."):
+            with st.spinner("AI 正在解析文件內文並轉換銀行 Clearing Code 中..."):
                 try:
-                    # 1. 解析上傳文件內容
                     file_text = ""
                     if uploaded_file.name.endswith(".pdf"):
                         pdf_reader = PdfReader(uploaded_file)
@@ -172,35 +193,12 @@ if uploaded_file:
                     else:
                         file_text = f"檔名: {uploaded_file.name}"
 
-                    if not file_text.strip():
-                        file_text = f"檔案名稱為 {uploaded_file.name}，請盡量提取相關入職資料。"
-
-                    # 2. 定義 System Prompt
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
-                    欄位名稱說明：
-                    - given_name: 英文名字
-                    - surname: 英文姓氏
-                    - given_name_secondary: 中文名字
-                    - surname_secondary: 中文姓氏
-                    - name_on_id: 身份證英文全名
-                    - id_no: 身份證號碼 (例如 Z123456(7))
-                    - date_of_birth: 出生日期 (YYYY-MM-DD 或 DD/MM/YYYY)
-                    - gender: 性別 (MALE/FEMALE)
-                    - mobile: 電話號碼
-                    - address_line_1, address_line_2, address_line_3: 地址
-                    - designation: 職銜
-                    - department: 部門 Code
-                    - commencement_date: 入職/生效日期
-                    - bank: 銀行名稱
-                    - account_no: 銀行帳號
-                    - salary: 月薪數字
-                    - email: 電郵地址
-                    
-                    若文件中某欄位不存在，請填寫 ""。必須只回傳 valid JSON 物件，不要有 Markdown 或額外文字。
+                    欄位：given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
+                    若無資料請填 ""。必須只回傳 JSON 物件。
                     """
 
-                    # 3. 判斷使用 GitHub Models API 或是 OpenAI API Endpoint
                     if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
                         api_url = "https://models.inference.ai.azure.com/chat/completions"
                         model_name = "gpt-4o-mini"
@@ -229,12 +227,12 @@ if uploaded_file:
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
                     else:
-                        st.error(f"API 呼叫失敗 (HTTP Status: {response.status_code})。錯誤細節：{response.text}")
+                        st.error(f"API 呼叫失敗 (HTTP Status: {response.status_code})。細節：{response.text}")
 
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
 
-# 7. 顯示結果區塊
+# 8. 顯示結果區塊
 if "normalized_json" in st.session_state:
     data = st.session_state["normalized_json"]
     
@@ -265,7 +263,7 @@ if "normalized_json" in st.session_state:
             st.text_input("DEPARTMENT", value=data["employment"]["department"], disabled=True)
             st.text_input("COMMENCEMENT DATE", value=data["employment"]["commencement_date"], disabled=True)
         with col2:
-            st.text_input("BANK", value=data["employment"]["bank"], disabled=True)
+            st.text_input("BANK (含 Clearing Code)", value=data["employment"]["bank"], disabled=True)
             st.text_input("ACCOUNT NO", value=data["employment"]["account_no"], disabled=True)
             st.text_input("EMAIL", value=data["employment"]["email"], disabled=True)
 
