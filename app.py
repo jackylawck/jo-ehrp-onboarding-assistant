@@ -256,7 +256,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (精準指向性 Prompt 升級)
+# 7. 主介面邏輯
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -303,10 +303,9 @@ if uploaded_file:
                     elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
 
-                    status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
+                    status_box.write(f"📊 **內部審計日誌**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
                     status_box.write("🧠 正在根據「多源指向性核對原則」交叉校驗學歷、履歷與專業證書...")
 
-                    # 【強化 Education, Prof Cert, Prev Employment 來源】的核心 Prompt
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
@@ -328,7 +327,7 @@ if uploaded_file:
                     5. 學歷、專業證書與過往履歷 (Education, Prof Cert, Prev Employment)：
                        - **學歷紀錄 (education)**：請從「CV」或「職位申請表 (HRF-006)」的「學歷及資格」區塊提煉 (包含 qualifications, major_in, institution, year_grad)。
                        - **過往工作履歷 (prev_employment)**：請從「CV」或「職位申請表 (HRF-006)」的「工作履歷」區塊提煉 (包含 company, date_join, date_left, designation, last_drawn)。
-                       - **專業證書 (prof_cert)**：**請仔細檢視上傳文件中的所有專業證書副本圖像** (例如: 急救證 Certificate in First Aid, 吊運安全督導員 Lifting Safety, 電工證 Certificate in Electrician, 安全督導員 Safety Supervisors, 金屬工/鋼架工 Master/Test Cert, 平安卡/工人註冊證等)，將每一張證書整理進 prof_cert 陣列 (包含 cert_name, institution, year_obtain)。
+                       - **專業證書 (prof_cert)**：請仔細檢視上傳文件中的所有專業證書副本圖像，將每一張證書整理進 prof_cert 陣列 (包含 cert_name, institution, year_obtain)。
 
                     【極重要原則 - 零猜測/零幻視】
                     不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
@@ -531,7 +530,17 @@ if "normalized_json" in st.session_state:
         else:
             st.info("尚無過往履歷紀錄")
 
+    # 采納朋友建議：加入 JSON 下載按鈕 (Tab 8)
     with tab8:
         st.subheader("eHRP Clean Payload (用於 Chrome Extension 一鍵填表)")
+        
+        st.download_button(
+            label="📋 下載 JSON 資料檔 (用於 Extension)",
+            data=json.dumps(data, ensure_ascii=False, indent=2),
+            file_name=f"eHRP_{data['header']['employee_no'] or 'new_employee'}.json",
+            mime="application/json",
+            type="primary"
+        )
+        
         st.json(data)
         st.code(json.dumps(data, ensure_ascii=False, indent=2), language="json")
