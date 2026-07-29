@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets
+# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
 secret_token = ""
 token_source = ""
 
@@ -108,9 +108,9 @@ with st.sidebar:
     st.divider()
 
     st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
-    st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 HR Tech Support。")
+    st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數
+# 6. eHRP 格式清洗核心函數 (純動態清洗，不含個人資料)
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -215,7 +215,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (進階指向性 Prompt 引擎)
+# 7. 主介面邏輯 (完全匿名通用提示詞)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -265,38 +265,38 @@ if uploaded_file:
                     status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
                     status_box.write("🧠 正在根據「指向性來源原則」進行交叉比對與精準提煉...")
 
-                    # 【指向性核對升級】的 System Prompt
+                    # 完全通用的提示詞，無硬編碼 PII
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
                     【極重要：資料來源優先級與指向性核對原則】
-                    為確保 HR 數據 100% 精準，請遇到資料衝突時，嚴格按照以下文檔優先級提取資料：
+                    為確保 HR 數據 100% 精準，遇到資料衝突時，請嚴格按以下文檔優先級提取資料：
                     1. 核心入職條件：職銜 (Designation)、部門 (Department)、薪金 (Salary)、職級/級別 (Rank/Grade/Point)、生效日期 -> 必須以「月薪僱傭合約」及「面試評估表/錄用條款」為絕對準則。
                     2. 個人身份核對：
                        - 身份證英文全名 (name_on_id)、身份證號碼 (id_no)、出生日期、性別 -> 必須以「香港身份證副本」圖像為絕對準則。
-                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」(如 Hang Seng Bank 卡面資訊) 為準。
+                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」卡面資訊為準。
                        - 居住地址 (address) -> 優先參考「住址證明影印本」，其次為「職位申請表」。
                     3. 補充背景資料：聯絡電話、電郵、緊急聯絡人 (Next of Kin)、學歷 (Education)、過往履歷 (Prev_Employment) -> 請從「職位申請表」或「CV」中提取。
 
                     【極重要原則 - 零猜測/零幻視】
                     1. 不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
-                    2. 常用部門請嚴格辨識：若是「寫字樓」，請填寫「寫字樓」或「HOF」。
+                    2. 部門請嚴格辨識原文，若模糊無法確定請填 ""。
 
-                    【欄位精準映射說明】
-                    - employee_no: 員工編號 / 僱員編號 (例如 E26073)
-                    - given_name: 英文名 (例如 WING FAAT)
-                    - surname: 英文姓 (例如 CHIU)
-                    - given_name_secondary: 中文名字 (例如 榮發)
-                    - surname_secondary: 中文姓氏 (例如 趙)
-                    - designation: 職銜 (例如 發展經理)
+                    【欄位結構】
+                    - employee_no: 員工編號 / 僱員編號
+                    - given_name: 英文名
+                    - surname: 英文姓
+                    - given_name_secondary: 中文名字
+                    - surname_secondary: 中文姓氏
+                    - designation: 職銜
                     - commencement_date: 生效日期 / 受僱日期
-                    - bank: 結算銀行名稱 (例如 HANG SENG, HSBC, BOC)
-                    - account_no: 銀行帳號 (例如 2419411158)
-                    - salary: 每月底薪 / 工資金額 (例如 44810.00)
-                    - rank: 職級 (例如 R8)
-                    - grade: 級別 (例如 12, G12)
-                    - point: 薪金點 / 支薪點 (例如 102)
-                    - address_line_1, address_line_2, address_line_3: 居住地址 (如未提及請填 "")
+                    - bank: 結算銀行名稱
+                    - account_no: 銀行帳號
+                    - salary: 每月底薪 / 工資金額
+                    - rank: 職級
+                    - grade: 級別
+                    - point: 薪金點 / 支薪點
+                    - address_line_1, address_line_2, address_line_3: 居住地址
                     - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}] ("last_drawn" 對應「最後薪金」)
 
                     必須只回傳 valid JSON 物件，不要包含 Markdown 標記或額外解釋。
