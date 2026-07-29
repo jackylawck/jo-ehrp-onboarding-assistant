@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import re
 import requests
+from pypdf import PdfReader
 
 # 1. 網頁頁面設定
 st.set_page_config(
@@ -11,7 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets (靜默載入，不於 UI 暴露)
+# 2. 安全讀取 Streamlit Secrets 中的 GITHUB_TOKEN
 secret_token = ""
 if "GITHUB_TOKEN" in st.secrets:
     secret_token = st.secrets["GITHUB_TOKEN"]
@@ -36,7 +37,6 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
 with st.sidebar:
     st.header("⚙️ 系統設定")
     
-    # 雙模式選擇
     key_mode = st.radio(
         "選擇 AI 金鑰模式：",
         ["使用開源公共免費額度", "使用自備 AI API Key (無限制)"],
@@ -57,7 +57,7 @@ with st.sidebar:
             
     else:  # 使用自備 Key 模式
         user_key = st.text_input(
-            "請輸入自備 AI API Key：",
+            "請輸入自備 AI API Key / GITHUB_TOKEN：",
             type="password",
             help="此 Key 僅存於您目前的瀏覽器 Session，不會上傳至任何 GitHub 或第三方伺服器。"
         )
@@ -65,11 +65,10 @@ with st.sidebar:
             st.success("🔒 自備 Key 已成功套用 (僅限本次 Session)")
             active_token = user_key
         else:
-            st.warning("請輸入您的 API Key 以解鎖無限制功能。")
+            st.warning("請輸入您的 Key 以解鎖功能。")
 
     st.divider()
 
-    # HR 管治與資安亮點面板
     st.markdown("### 🛡️ 數據安全與進階 HR 管治特色")
     st.markdown("##### 🔐 企業隱私防護：")
     st.markdown("""
@@ -82,7 +81,6 @@ with st.sidebar:
     
     st.divider()
 
-    # 檔案上傳區
     uploaded_file = st.file_uploader(
         "上傳新員工入職表格 / CV", 
         type=["pdf", "docx", "xlsx", "txt", "png", "jpg"]
@@ -90,7 +88,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 🌐 公司品牌與個人 IP 宣傳 Footer
     st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
     st.markdown("""
     ⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。
@@ -99,17 +96,11 @@ with st.sidebar:
 
 # 5. eHRP 格式清洗核心函數 (Data Normalizer)
 def normalize_ehrp_data(raw_dict):
-    """
-    將提取出的原始文字嚴格轉為 eHRP 系統要求的格式：
-    1. 英文全大寫 (UPPERCASE)
-    2. 短年份日期 (DD/MM/YY)
-    3. 金額保留兩位小數 (40330.00)
-    """
     def to_uppercase(text):
-        return str(text).strip().upper() if text and text != "NONE" else ""
+        return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
 
     def to_ehrp_date(date_str):
-        if not date_str or date_str == "NONE":
+        if not date_str or str(date_str).upper() == "NONE":
             return ""
         clean_date = re.sub(r'[-.]', '/', str(date_str).strip())
         parts = clean_date.split('/')
@@ -132,7 +123,7 @@ def normalize_ehrp_data(raw_dict):
             "given_name": to_uppercase(raw_dict.get("given_name")),
             "surname": to_uppercase(raw_dict.get("surname")),
             "name_on_id": to_uppercase(raw_dict.get("name_on_id") or f"{raw_dict.get('surname', '')} {raw_dict.get('given_name', '')}".strip()),
-            "given_name_secondary": raw_dict.get("given_name_secondary", ""),  # 中文名保持原樣
+            "given_name_secondary": raw_dict.get("given_name_secondary", ""),
             "surname_secondary": raw_dict.get("surname_secondary", ""),
             "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
             "id_no": to_uppercase(raw_dict.get("id_no")),
@@ -168,56 +159,85 @@ if uploaded_file:
         if not active_token:
             st.error("請先選擇 AI 金鑰模式並確保金鑰載入成功！")
         else:
-            with st.spinner("AI 正在解析上傳文件並清洗格式中..."):
+            with st.spinner("AI 正在解析文件內文並清洗格式中..."):
                 try:
-                    # 讀取上傳檔案內容
+                    # 1. 解析上傳文件內容
                     file_text = ""
-                    if uploaded_file.name.endswith(".txt"):
+                    if uploaded_file.name.endswith(".pdf"):
+                        pdf_reader = PdfReader(uploaded_file)
+                        for page in pdf_reader.pages:
+                            file_text += page.extract_text() or ""
+                    elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
                     else:
-                        file_text = f"檔名: {uploaded_file.name} (請由 AI 提取檔案中的個人入職資料)"
+                        file_text = f"檔名: {uploaded_file.name}"
 
-                    # 系統提示詞：強制回傳標準 JSON
+                    if not file_text.strip():
+                        file_text = f"檔案名稱為 {uploaded_file.name}，請盡量提取相關入職資料。"
+
+                    # 2. 定義 System Prompt
                     system_prompt = """
-                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳格式嚴格相同的 JSON。
-                    格式規範：
-                    1. 英文欄位強制轉換為 UPPERCASE（全大寫）。
-                    2. 日期格式轉換為 YYYY-MM-DD 或 DD/MM/YYYY（後端會再自動格式化為 DD/MM/YY）。
-                    3. JSON 必須包含且僅包含以下 key:
-                       given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
-                    若文件中某欄位不存在，請填寫 ""。
+                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
+                    欄位名稱說明：
+                    - given_name: 英文名字
+                    - surname: 英文姓氏
+                    - given_name_secondary: 中文名字
+                    - surname_secondary: 中文姓氏
+                    - name_on_id: 身份證英文全名
+                    - id_no: 身份證號碼 (例如 Z123456(7))
+                    - date_of_birth: 出生日期 (YYYY-MM-DD 或 DD/MM/YYYY)
+                    - gender: 性別 (MALE/FEMALE)
+                    - mobile: 電話號碼
+                    - address_line_1, address_line_2, address_line_3: 地址
+                    - designation: 職銜
+                    - department: 部門 Code
+                    - commencement_date: 入職/生效日期
+                    - bank: 銀行名稱
+                    - account_no: 銀行帳號
+                    - salary: 月薪數字
+                    - email: 電郵地址
+                    
+                    若文件中某欄位不存在，請填寫 ""。必須只回傳 valid JSON 物件，不要有 Markdown 或額外文字。
                     """
+
+                    # 3. 判斷使用 GitHub Models API 或是 OpenAI API Endpoint
+                    if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
+                        api_url = "https://models.inference.ai.azure.com/chat/completions"
+                        model_name = "gpt-4o-mini"
+                    else:
+                        api_url = "https://api.openai.com/v1/chat/completions"
+                        model_name = "gpt-4o-mini"
 
                     headers = {
                         "Authorization": f"Bearer {active_token}",
                         "Content-Type": "application/json"
                     }
                     payload = {
-                        "model": "gpt-4o-mini",
+                        "model": model_name,
                         "messages": [
                             {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                            {"role": "user", "content": f"請解析以下文件內文並輸出 JSON：\n\n{file_text}"}
                         ],
                         "response_format": {"type": "json_object"}
                     }
                     
-                    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload, timeout=30)
+                    response = requests.post(api_url, headers=headers, json=payload, timeout=30)
                     
                     if response.status_code == 200:
-                        extracted_json = json.loads(response.json()['choices'][0]['message']['content'])
+                        content_str = response.json()['choices'][0]['message']['content']
+                        extracted_json = json.loads(content_str)
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
                     else:
-                        st.error(f"API 呼叫失敗 (HTTP Status: {response.status_code})。請檢查 API Key 權限或 Secrets 設定。")
+                        st.error(f"API 呼叫失敗 (HTTP Status: {response.status_code})。錯誤細節：{response.text}")
 
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
 
-# 7. 顯示清洗後的結果區塊 (僅在點擊解析後顯示)
+# 7. 顯示結果區塊
 if "normalized_json" in st.session_state:
     data = st.session_state["normalized_json"]
     
-    # 多 Tab 檢視區塊
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Particulars", "Address", "Employment", "Salary", "JSON 數據庫"])
     
     with tab1:
