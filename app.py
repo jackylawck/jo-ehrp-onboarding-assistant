@@ -4,9 +4,8 @@ import json
 import re
 import requests
 import base64
-import fitz  # PyMuPDF 用於渲染掃描版 PDF 頁面為圖片
+import fitz  # PyMuPDF: 用於將影印機掃描版 PDF 頁面渲染為圖片
 from pypdf import PdfReader
-from PIL import Image
 import io
 
 # 1. 網頁頁面設定
@@ -16,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets
+# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
 secret_token = ""
 token_source = ""
 
@@ -96,7 +95,7 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **掃描檔影印本自動辨識**：支援影像與照片 OCR 提煉。
+      * **雙軌解析引擎**：自動切換向量文字提取與 Vision 影印本光學辨識 (OCR)。
       * **eHRP 系統介面 1:1 精確對齊**：欄位命名與排列完全匹配真實 eHRP 系統。
       * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
     """)
@@ -111,7 +110,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數
+# 6. eHRP 格式清洗核心函數 (動態資料清洗，零寫死)
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -209,7 +208,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (包含純圖片與文字雙軌解析)
+# 7. 主介面邏輯 (包含純圖片與向量文字雙軌解析引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -217,22 +216,22 @@ if uploaded_file:
         if not active_token:
             st.error("請先確保 API Key / Token 載入成功！")
         else:
-            with st.spinner("AI 正在進行影像 OCR 與文字解析中..."):
+            with st.spinner("AI 正在解析文件內容 (包含掃描頁面圖像光學辨識)..."):
                 try:
                     file_text = ""
                     base64_images = []
 
-                    # 1. 嘗試提煉向量文字
+                    # 1. 讀取 PDF
                     if uploaded_file.name.endswith(".pdf"):
                         pdf_bytes = uploaded_file.read()
                         pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
                         
-                        # 2. 若提煉文字為空（影印機掃描檔），使用 PyMuPDF 將前 3 頁轉成圖片
-                        if not file_text.strip():
+                        # 2. 若文字提煉為空（掃描檔/照片 PDF），自動將 PDF 前 4 頁轉成 base64 高清圖像
+                        if len(file_text.strip()) < 20:
                             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                            for i in range(min(3, len(doc))):
+                            for i in range(min(4, len(doc))):
                                 page = doc[i]
                                 pix = page.get_pixmap(dpi=150)
                                 img_bytes = pix.tobytes("png")
@@ -248,42 +247,62 @@ if uploaded_file:
                         file_text = uploaded_file.read().decode("utf-8")
 
                     system_prompt = """
-                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件或圖片中提取員工入職資料，並回傳 JSON 物件。
+                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件文字或圖像中提取員工入職資料，並回傳 JSON 物件。
                     請嚴格按照以下微觀欄位名稱輸出：
-                    Header: employee_no
+                    Header: employee_no (例如 E26073)
                     Particulars: 
-                      - given_name, surname, name_on_id, given_name_secondary, surname_secondary
-                      - id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion
-                      - telephone_home, mobile, secondary_contact, employment_status, probation_months
+                      - given_name (英文名, 如 WING FAAT)
+                      - surname (英文姓, 如 CHIU)
+                      - name_on_id (身份證英文全名, 如 CHIU WING FAAT)
+                      - given_name_secondary (中文名字, 如 榮發)
+                      - surname_secondary (中文姓氏, 如 趙)
+                      - id_type (如 LOCAL/PR)
+                      - id_no (身份證號碼, 如 P932569(0))
+                      - alias (別名/英文名)
+                      - gender (MALE/FEMALE)
+                      - date_of_birth (出生日期)
+                      - marital_status (MARRIED/SINGLE)
+                      - nationality (如 HONG KONG SAR)
+                      - race, country_of_birth, religion
+                      - telephone_home, mobile, secondary_contact
+                      - employment_status (如 ACTIVE)
+                      - probation_months (如 3)
                     Address: address_line_1, address_line_2, address_line_3, f_post_code
                     Employment: 
-                      - designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme
-                      - position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
+                      - designation (職銜, 如 發展經理 / MANAGER)
+                      - effective_date_designation, department (部門 Code, 如 寫字樓 / HOF)
+                      - employee_type (如 EMPLOYEES), staff_group, employee_class, employment_scheme (如 SALARY)
+                      - position, commencement_date, cessation_date, confirmation_date
+                      - bank (銀行名稱, 如 HANG SENG, HSBC, BOC)
+                      - account_no (銀行戶口號碼, 如 2419411158)
+                      - email
                     Salary: 
-                      - salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
+                      - salary (底薪數字, 如 44810.00)
+                      - variable_salary, daily_rate, add_rate
+                      - rank (職級 Code, 如 R8, R9)
+                      - grade (級別, 如 12, G12, 14)
+                      - point (薪金點, 如 102, 141)
+                      - effective_date (生效日期)
                     Education (陣列): [{qualifications, major_in, institution, year_grad}]
                     Prof_Cert (陣列): [{cert_name, institution, year_obtain}]
                     Next_Of_Kin (陣列): [{relationship, surname, given_name, pri_contact}]
                     Prev_Employment (陣列): [{company, date_join, date_left, designation, last_drawn}]
 
-                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
+                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown 標記。
                     """
 
-                    # 構建消息 Payload (支援文字與圖片多模態 Vision)
-                    user_content = []
-                    if file_text.strip():
-                        user_content.append({"type": "text", "text": f"請解析以下文件文字並輸出 JSON：\n\n{file_text}"})
-                    elif base64_images:
-                        user_content.append({"type": "text", "text": "請辨識分析以下掃描版入職表格/身分證圖片並提煉完整個人資料 JSON："})
+                    # 構建多模態內容 (多圖片或純文字)
+                    if base64_images:
+                        user_content = [{"type": "text", "text": "請仔細閱讀並辨識以下掃描版入職表格/合約圖像內容，提取所有個人的 eHRP 欄位資料 JSON："}]
                         for b64 in base64_images:
                             user_content.append({
                                 "type": "image_url",
                                 "image_url": {"url": f"data:image/png;base64,{b64}"}
                             })
                     else:
-                        user_content.append({"type": "text", "text": f"檔名: {uploaded_file.name}，請盡量提煉資料。"})
+                        user_content = [{"type": "text", "text": f"請解析以下文件文字並輸出 JSON：\n\n{file_text}"}]
 
-                    # API 呼叫發送
+                    # 發送 API 請求
                     if active_token.startswith("gsk_"):
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
                         model_name = "llama-3.2-11b-vision-preview" if base64_images else "llama-3.3-70b-versatile"
@@ -301,10 +320,11 @@ if uploaded_file:
                     elif active_token.startswith("AIzaSy"):
                         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
                         parts = [{"text": system_prompt}]
-                        if file_text.strip():
+                        if base64_images:
+                            for b64 in base64_images:
+                                parts.append({"inline_data": {"mime_type": "image/png", "data": b64}})
+                        else:
                             parts.append({"text": file_text})
-                        for b64 in base64_images:
-                            parts.append({"inline_data": {"mime_type": "image/png", "data": b64}})
                         
                         payload = {
                             "contents": [{"parts": parts}],
