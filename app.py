@@ -4,7 +4,7 @@ import json
 import re
 import requests
 import base64
-import fitz  # PyMuPDF: 用於將影印機掃描版 PDF 頁面渲染為圖片
+import fitz  # PyMuPDF
 from pypdf import PdfReader
 import io
 
@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
+# 2. 安全讀取 Streamlit Secrets
 secret_token = ""
 token_source = ""
 
@@ -95,7 +95,7 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **雙軌解析引擎**：自動切換向量文字提取與 Vision 影印本光學辨識 (OCR)。
+      * **強效雙軌解析**：自動識別向量文字與圖片檔，支援「強制光學辨識 (OCR)」。
       * **eHRP 系統介面 1:1 精確對齊**：欄位命名與排列完全匹配真實 eHRP 系統。
       * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
     """)
@@ -110,7 +110,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數 (動態資料清洗，零寫死)
+# 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -208,35 +208,43 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (包含純圖片與向量文字雙軌解析引擎)
+# 7. 主介面邏輯
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
+    
+    # 采納朋友建議：加入「強制使用光學辨識」控制選項
+    force_ocr = st.checkbox("📄 強制啟用光學辨識 (適用於影印本/掃描檔/照片 PDF)", value=True)
     
     if st.button("🚀 開始解析並清洗數據", type="primary"):
         if not active_token:
             st.error("請先確保 API Key / Token 載入成功！")
         else:
-            with st.spinner("AI 正在解析文件內容 (包含掃描頁面圖像光學辨識)..."):
+            with st.spinner("AI 正在進行影像 OCR 與文字解析中..."):
                 try:
                     file_text = ""
                     base64_images = []
 
-                    # 1. 讀取 PDF
+                    # 1. 讀取 PDF 內容
                     if uploaded_file.name.endswith(".pdf"):
                         pdf_bytes = uploaded_file.read()
                         pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
                         
-                        # 2. 若文字提煉為空（掃描檔/照片 PDF），自動將 PDF 前 4 頁轉成 base64 高清圖像
-                        if len(file_text.strip()) < 20:
+                        # 噪音判定：若勾選強制 OCR、字數小於 200，或含有超過 30% 的「1」等掃描雜訊
+                        is_noisy = len(file_text.strip()) > 0 and (file_text.count('1') > len(file_text) * 0.25)
+                        
+                        if force_ocr or len(file_text.strip()) < 200 or is_noisy:
                             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                            for i in range(min(4, len(doc))):
+                            # 將前 10 頁轉換為圖片，確保涵蓋申請表、合約及附件
+                            for i in range(min(10, len(doc))):
                                 page = doc[i]
-                                pix = page.get_pixmap(dpi=150)
+                                pix = page.get_pixmap(dpi=130) # 130 DPI 清晰且體積適中
                                 img_bytes = pix.tobytes("png")
                                 b64 = base64.b64encode(img_bytes).decode("utf-8")
                                 base64_images.append(b64)
+                            # 轉圖後清除垃圾雜訊文字
+                            file_text = ""
 
                     elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
                         img_bytes = uploaded_file.read()
@@ -246,38 +254,40 @@ if uploaded_file:
                     elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
 
+                    # 采納朋友建議：增加除錯狀態輸出
+                    st.write(f"📊 **解析診斷**: 文字提取長度 `{len(file_text)}` 字元 | 轉換圖片數量 `{len(base64_images)}` 頁")
+
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件文字或圖像中提取員工入職資料，並回傳 JSON 物件。
                     請嚴格按照以下微觀欄位名稱輸出：
                     Header: employee_no (例如 E26073)
                     Particulars: 
-                      - given_name (英文名, 如 WING FAAT)
-                      - surname (英文姓, 如 CHIU)
-                      - name_on_id (身份證英文全名, 如 CHIU WING FAAT)
-                      - given_name_secondary (中文名字, 如 榮發)
-                      - surname_secondary (中文姓氏, 如 趙)
+                      - given_name (英文名)
+                      - surname (英文姓)
+                      - name_on_id (身份證英文全名)
+                      - given_name_secondary (中文名字)
+                      - surname_secondary (中文姓氏)
                       - id_type (如 LOCAL/PR)
-                      - id_no (身份證號碼, 如 P932569(0))
+                      - id_no (身份證號碼)
                       - alias (別名/英文名)
                       - gender (MALE/FEMALE)
                       - date_of_birth (出生日期)
                       - marital_status (MARRIED/SINGLE)
-                      - nationality (如 HONG KONG SAR)
-                      - race, country_of_birth, religion
+                      - nationality, race, country_of_birth, religion
                       - telephone_home, mobile, secondary_contact
                       - employment_status (如 ACTIVE)
                       - probation_months (如 3)
                     Address: address_line_1, address_line_2, address_line_3, f_post_code
                     Employment: 
-                      - designation (職銜, 如 發展經理 / MANAGER)
-                      - effective_date_designation, department (部門 Code, 如 寫字樓 / HOF)
-                      - employee_type (如 EMPLOYEES), staff_group, employee_class, employment_scheme (如 SALARY)
+                      - designation (職銜)
+                      - effective_date_designation, department (部門)
+                      - employee_type, staff_group, employee_class, employment_scheme
                       - position, commencement_date, cessation_date, confirmation_date
                       - bank (銀行名稱, 如 HANG SENG, HSBC, BOC)
-                      - account_no (銀行戶口號碼, 如 2419411158)
+                      - account_no (銀行戶口號碼)
                       - email
                     Salary: 
-                      - salary (底薪數字, 如 44810.00)
+                      - salary (底薪數字)
                       - variable_salary, daily_rate, add_rate
                       - rank (職級 Code, 如 R8, R9)
                       - grade (級別, 如 12, G12, 14)
@@ -291,9 +301,9 @@ if uploaded_file:
                     若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown 標記。
                     """
 
-                    # 構建多模態內容 (多圖片或純文字)
+                    # 構建 Payload
                     if base64_images:
-                        user_content = [{"type": "text", "text": "請仔細閱讀並辨識以下掃描版入職表格/合約圖像內容，提取所有個人的 eHRP 欄位資料 JSON："}]
+                        user_content = [{"type": "text", "text": "請仔細閱讀並辨識以下掃描版入職表格/合約圖像內容，提煉所有個人的 eHRP 欄位資料 JSON："}]
                         for b64 in base64_images:
                             user_content.append({
                                 "type": "image_url",
@@ -315,7 +325,7 @@ if uploaded_file:
                             ],
                             "response_format": {"type": "json_object"}
                         }
-                        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
 
                     elif active_token.startswith("AIzaSy"):
                         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
@@ -330,7 +340,7 @@ if uploaded_file:
                             "contents": [{"parts": parts}],
                             "generationConfig": {"response_mime_type": "application/json"}
                         }
-                        response = requests.post(api_url, json=payload, timeout=45)
+                        response = requests.post(api_url, json=payload, timeout=60)
 
                     else:
                         if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
@@ -349,8 +359,9 @@ if uploaded_file:
                             ],
                             "response_format": {"type": "json_object"}
                         }
-                        response = requests.post(api_url, headers=headers, json=payload, timeout=45)
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
 
+                    # 採納朋友建議：增加完整 API 錯誤訊息印出
                     if response.status_code == 200:
                         if active_token.startswith("AIzaSy"):
                             content_str = response.json()['candidates'][0]['content']['parts'][0]['text']
@@ -361,7 +372,7 @@ if uploaded_file:
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
                     else:
-                        st.error(f"API 驗證失敗 (HTTP Status: {response.status_code})。細節：{response.text}")
+                        st.error(f"❌ API 呼叫失敗 (HTTP Status: {response.status_code})\n錯誤細節：{response.text}")
 
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
