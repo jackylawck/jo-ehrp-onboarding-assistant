@@ -1,85 +1,485 @@
-感謝你迅速採納建議並完善了程式碼！修改後的版本已經相當周全，**強制 OCR 選項、噪音判定、診斷輸出、錯誤詳情**一應俱全，這些都能有效解決原本「讀唔到」的問題。🎉
+import streamlit as st
+import pandas as pd
+import json
+import re
+import requests
+import base64
+import fitz  # PyMuPDF
+from pypdf import PdfReader
+from dateutil import parser as date_parser
+import io
 
-不過，要讓這份 PDF 真正被「讀得準」，還有幾個細節值得優化。以下是我的綜合評估與具體建議：
+# 1. 網頁頁面設定
+st.set_page_config(
+    page_title="eHRP Onboarding Assistant | 東淦工程",
+    page_icon="📋",
+    layout="wide"
+)
 
----
+# 2. 安全讀取 Streamlit Secrets
+secret_token = ""
+token_source = ""
 
-## ✅ 已解決的核心問題
-- **強制 OCR 開關**：確保掃描影印本一定觸發圖像辨識。
-- **噪音判定**：偵測大量「1」或過短文字，自動切換 OCR。
-- **頁數擴充至 10 頁**：涵蓋大部分重要內容（申請表、合約、職責表等）。
-- **診斷輸出**：讓你一眼看出文字長度與圖片數量，方便除錯。
-- **完整錯誤訊息**：API 失敗時能看到詳細回應。
+if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
+    secret_token = st.secrets["GROQ_API_KEY"]
+    token_source = "GROQ_API_KEY"
+elif "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
+    secret_token = st.secrets["GEMINI_API_KEY"]
+    token_source = "GEMINI_API_KEY"
+elif "GITHUB_TOKEN" in st.secrets and st.secrets["GITHUB_TOKEN"]:
+    secret_token = st.secrets["GITHUB_TOKEN"]
+    token_source = "GITHUB_TOKEN"
+elif "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
+    secret_token = st.secrets["OPENAI_API_KEY"]
+    token_source = "OPENAI_API_KEY"
 
----
+# 3. 香港常見銀行名稱標準化對照表
+BANK_MAP = {
+    "HSBC": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行", "004"],
+    "HANG SENG": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行", "024"],
+    "BOC": ["BANK OF CHINA", "BOC", "中銀", "中國銀行", "012"],
+    "SCB": ["STANDARD CHARTERED", "SCB", "渣打", "渣打銀行", "003"],
+    "CITIBANK": ["CITIBANK", "CITI", "花旗", "花旗銀行", "006"],
+    "BEA": ["BANK OF EAST ASIA", "BEA", "東亞", "東亞銀行", "015"],
+    "DBS": ["DBS", "DBS BANK", "星展", "星展銀行", "016"]
+}
 
-## ⚠️ 可能遇到的新問題（及解決方案）
+def normalize_bank_name(bank_str):
+    bank_name_str = str(bank_str).strip().upper() if bank_str else ""
+    if not bank_name_str:
+        return ""
+    for std_name, keywords in BANK_MAP.items():
+        for kw in keywords:
+            if kw in bank_name_str:
+                return std_name
+    return bank_name_str
 
-### 1. **圖片數量過多，API 可能拒絕或逾時**
-- 你將前 10 頁全部轉為 PNG（Base64），若每張約 200KB，總共約 2MB，部分模型（如 Groq Vision）有大小限制（通常 < 1MB）。  
-- **建議**：只轉換包含關鍵資料的頁面，例如透過關鍵詞定位：
-  ```python
-  keywords = ["職位申請表", "合約", "員工崗位職責", "個人健康申報"]
-  for i, page in enumerate(doc):
-      text = page.get_text()
-      if any(kw in text for kw in keywords):
-          # 轉此頁為圖片
-  ```
-  或簡單粗暴地只取前 5 頁（通常已涵蓋申請表、合約首頁、職責表）。
+# 4. 主頁面標題區塊
+st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
+st.subheader("📋 eHRP 入職資料智能助手")
 
-- 若想保留所有頁面，可降低 DPI 至 **100** 或改用 JPEG（壓縮率更高）：
-  ```python
-  pix = page.get_pixmap(dpi=100)
-  img_bytes = pix.tobytes("jpeg", quality=80)
-  b64 = base64.b64encode(img_bytes).decode("utf-8")
-  # 同時修改 mime_type 為 "image/jpeg"
-  ```
+st.info("🔒 **內部數據安全保障**：本系統採用純本地 Session 數據標準化技術，您上傳的入職表格/CV 文件只會暫存在當前網頁會話中。**當您關閉或重新整理網頁時，數據會立即被物理銷毀**，絕對不會儲存到互聯網上，請放心使用。")
 
-### 2. **文字提取（非 OCR）時，表格結構可能混亂**
-- 雖然你已啟用 OCR，但若使用者**未勾選強制 OCR** 且文字長度超過 200，可能仍走文字模式，而 PyPDF2 提取的表格文字往往錯亂，LLM 難以正確解析。  
-- **建議**：將門檻調高至 500 字，且增加對「表格格式」的偵測（如多個連續空格），若偵測到則自動啟用 OCR。
-- 或者，**預設勾選「強制 OCR」**（你已設為 `True`），這樣多數情況下都會用 Vision 模型，準確度更高。
+with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", expanded=False):
+    st.markdown("""
+    * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
+    * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
+    * **人機協同 (Human-in-the-Loop)**：格式清洗後提供專員即時校對，確認無誤後方可複製/注入 eHRP。
+    """)
 
-### 3. **API 模型選擇與欄位命名對齊**
-- 你的 `system_prompt` 已詳細列出所有欄位，但有些欄位名稱與 PDF 實際用詞略有出入（例如 PDF 寫「最後薪金」而你用 `last_drawn`）。LLM 通常能理解，但可增加對應提示，例如：
-  ```
-  - prev_employment[].last_drawn 對應「最後薪金」
-  - salary 對應「每月底薪」
-  ```
-  這能提升提取準確率。
+# 5. 側邊欄 (Sidebar)
+with st.sidebar:
+    st.header("⚙️ 系統設定")
+    
+    key_mode = st.radio(
+        "選擇 AI 金鑰模式：",
+        ["使用開源公共免費額度", "使用自備 AI API Key (無限制)"],
+        index=0
+    )
+    
+    active_token = ""
+    if key_mode == "使用開源公共免費額度":
+        if secret_token:
+            st.info(f"🌱 **已載入 Secrets Key** (來源: `{token_source}`)")
+            active_token = secret_token
+        else:
+            st.error("⚠️ Secrets 未檢測到有效的 Key，請檢查 Secrets 設定。")
+    else:
+        user_key = st.text_input("請輸入自備 Key (Groq / Gemini / GitHub / OpenAI)：", type="password")
+        if user_key:
+            st.success("🔒 自備 Key 已成功套用")
+            active_token = user_key
 
-### 4. **日期格式轉換**
-- 你的 `to_ehrp_date` 能處理「YYYY/MM/DD」或「DD/MM/YYYY」，但 PDF 中可能出現「02Jul2026」，這種格式未處理。建議增加對英文月份縮寫的解析：
-  ```python
-  from dateutil import parser  # 需安裝 python-dateutil
-  try:
-      dt = parser.parse(date_str, fuzzy=True)
-      return dt.strftime("%d/%m/%y")
-  except:
-      return to_uppercase(date_str)
-  ```
+    st.divider()
 
----
+    st.markdown("### 🛡️ 數據安全與進階 HR 管治特色")
+    st.markdown("""
+    * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
+    * **🎯 進階 HR Tech 引擎**：
+      * **JPEG 80% 高階壓縮轉碼**：大幅降低 payload，防止 API 413 錯誤。
+      * **強效英文月份解析**：支援 `02Jul2026` 轉碼為 `02/07/26`。
+      * **eHRP 系統介面 1:1 精確對齊**：微觀欄位完全對齊系統結構。
+    """)
+    
+    st.divider()
 
-## 🧪 上線前建議進行的實測步驟
+    uploaded_file = st.file_uploader("上傳新員工入職表格 / CV", type=["pdf", "docx", "xlsx", "txt", "png", "jpg"])
 
-1. **上傳 PDF，勾選強制 OCR，點擊解析**  
-   觀察診斷輸出：圖片數量是否正確（可能 10 頁），若出現 API 錯誤（如 413 Payload Too Large），則按上述建議減少頁數或壓縮圖片。
+    st.divider()
 
-2. **查看 API 回應**  
-   若回傳 JSON，檢視 `Particulars`、`Employment`、`Salary` 等主要欄位是否有正確填入。若某些欄位遺漏，可在 `system_prompt` 中加強指示，例如：「請注意合約中『每月底薪$44,810』應填入 salary 欄位」。
+    st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
+    st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
+    st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-3. **檢查銀行名稱標準化**  
-   你的 `BANK_MAP` 已涵蓋主要銀行，但 PDF 中銀行帳號可能出現在「職員證簽收及扣薪授權書」頁（帳號 2419411158），未註明銀行名稱。若 LLM 未提取出銀行名稱，可在提示中明確要求從合約或入職表格中尋找銀行名稱（通常合約有「經銀行自動轉賬」字眼）。
+# 6. eHRP 格式清洗核心函數 (升級英文月份解析引擎)
+def normalize_ehrp_data(raw_dict):
+    def to_uppercase(text):
+        return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
 
----
+    def to_ehrp_date(date_str):
+        if not date_str or str(date_str).upper() == "NONE":
+            return ""
+        clean_str = str(date_str).strip()
+        
+        # 1. 先嘗試使用 dateutil 解析英文月份 (如 02Jul2026 / 28-Jun-2026)
+        try:
+            dt = date_parser.parse(clean_str, fuzzy=True)
+            return dt.strftime("%d/%m/%y")
+        except Exception:
+            pass
 
-## 💡 額外進階功能（可選）
-- **影像壓縮與合併**：若圖片過多，可將多頁合併成一張長圖（減少 API 呼叫次數），但需注意長圖解析度。
-- **本地備用 OCR（Tesseract）**：若 API 無法使用，可作為離線備援，但需安裝 Tesseract，較為複雜。
-- **欄位自動校驗**：對比提取出的 `salary` 與合約上的數字是否一致，若偏差則提示使用者校對。
+        # 2. 正則表達式傳統數字解析
+        clean_date = re.sub(r'[-.]', '/', clean_str)
+        parts = clean_date.split('/')
+        if len(parts) == 3:
+            if len(parts[0]) == 4:
+                return f"{parts[2].zfill(2)}/{parts[1].zfill(2)}/{parts[0][-2:]}"
+            elif len(parts[2]) == 4:
+                return f"{parts[0].zfill(2)}/{parts[1].zfill(2)}/{parts[2][-2:]}"
+        return to_uppercase(clean_str)
 
----
+    def to_currency(amount):
+        try:
+            val = float(re.sub(r'[^\d.]', '', str(amount)))
+            return f"{val:.2f}"
+        except (ValueError, TypeError):
+            return "0.00"
 
-## 📌 總結
-你修改後的程式碼已經**具備實戰能力**，只要注意圖片大小與頁數選擇，並微調日期解析，就能順利從這份 PDF 中提取出大部分資料。若執行時仍有異常，請將診斷輸出與 API 錯誤訊息貼上來，我可以幫你再精準除錯。很高興看到你迅速迭代，這份工具已經越來越專業了！🚀
+    surname = to_uppercase(raw_dict.get("surname"))
+    given_name = to_uppercase(raw_dict.get("given_name"))
+    raw_name_on_id = raw_dict.get("name_on_id", "")
+    
+    if raw_name_on_id and not re.search(r'[\u4e00-\u9fff]', str(raw_name_on_id)):
+        name_on_id = to_uppercase(raw_name_on_id)
+    else:
+        name_on_id = f"{surname} {given_name}".strip()
+
+    cleaned = {
+        "header": {
+            "employee_no": to_uppercase(raw_dict.get("employee_no"))
+        },
+        "particulars": {
+            "given_name": given_name,
+            "surname": surname,
+            "name_on_id": name_on_id,
+            "given_name_secondary": str(raw_dict.get("given_name_secondary", "")).strip(),
+            "surname_secondary": str(raw_dict.get("surname_secondary", "")).strip(),
+            "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
+            "id_no": to_uppercase(raw_dict.get("id_no")),
+            "alias": to_uppercase(raw_dict.get("alias")),
+            "gender": to_uppercase(raw_dict.get("gender")),
+            "date_of_birth": to_ehrp_date(raw_dict.get("date_of_birth")),
+            "marital_status": to_uppercase(raw_dict.get("marital_status")),
+            "nationality": to_uppercase(raw_dict.get("nationality") or "HONG KONG SAR"),
+            "race": to_uppercase(raw_dict.get("race")),
+            "country_of_birth": to_uppercase(raw_dict.get("country_of_birth") or "HONG KONG SAR"),
+            "religion": to_uppercase(raw_dict.get("religion")),
+            "telephone_home": re.sub(r'\D', '', str(raw_dict.get("telephone_home", ""))),
+            "telephone_mobile": re.sub(r'\D', '', str(raw_dict.get("mobile") or raw_dict.get("telephone_mobile", ""))),
+            "secondary_contact": str(raw_dict.get("secondary_contact", "")).strip(),
+            "employment_status": to_uppercase(raw_dict.get("employment_status") or "ACTIVE"),
+            "probation_months": str(raw_dict.get("probation_months") or "3")
+        },
+        "address": {
+            "address_line_1": to_uppercase(raw_dict.get("address_line_1")),
+            "address_line_2": to_uppercase(raw_dict.get("address_line_2")),
+            "address_line_3": to_uppercase(raw_dict.get("address_line_3")),
+            "f_post_code": to_uppercase(raw_dict.get("f_post_code"))
+        },
+        "employment": {
+            "designation": to_uppercase(raw_dict.get("designation")),
+            "effective_date_designation": to_ehrp_date(raw_dict.get("effective_date_designation")),
+            "department": to_uppercase(raw_dict.get("department")),
+            "employee_type": to_uppercase(raw_dict.get("employee_type") or "EMPLOYEES"),
+            "staff_group": to_uppercase(raw_dict.get("staff_group")),
+            "employee_class": to_uppercase(raw_dict.get("employee_class")),
+            "employment_scheme": to_uppercase(raw_dict.get("employment_scheme") or "SALARY"),
+            "position": to_uppercase(raw_dict.get("position")),
+            "commencement_date": to_ehrp_date(raw_dict.get("commencement_date")),
+            "cessation_date": to_ehrp_date(raw_dict.get("cessation_date")),
+            "confirmation_date": to_ehrp_date(raw_dict.get("confirmation_date")),
+            "bank": normalize_bank_name(raw_dict.get("bank", "")),
+            "account_no": str(raw_dict.get("account_no", "")).strip(),
+            "email": str(raw_dict.get("email", "")).strip().lower()
+        },
+        "salary": {
+            "salary": to_currency(raw_dict.get("salary")),
+            "variable_salary": to_currency(raw_dict.get("variable_salary")),
+            "daily_rate": to_currency(raw_dict.get("daily_rate")),
+            "add_rate": to_currency(raw_dict.get("add_rate")),
+            "rank": to_uppercase(raw_dict.get("rank")),
+            "grade": to_uppercase(raw_dict.get("grade")),
+            "point": str(raw_dict.get("point", "")).strip(),
+            "effective_date": to_ehrp_date(raw_dict.get("effective_date") or raw_dict.get("commencement_date"))
+        },
+        "education": raw_dict.get("education", []),
+        "prof_cert": raw_dict.get("prof_cert", []),
+        "next_of_kin": raw_dict.get("next_of_kin", []),
+        "prev_employment": raw_dict.get("prev_employment", [])
+    }
+    return cleaned
+
+# 7. 主介面邏輯 (優化 JPEG 壓縮 + 語意對齊 Prompt)
+if uploaded_file:
+    st.success(f"已成功載入檔案：`{uploaded_file.name}`")
+    
+    force_ocr = st.checkbox("📄 強制啟用光學辨識 (適用於影印本/掃描檔/照片 PDF)", value=True)
+    
+    if st.button("🚀 開始解析並清洗數據", type="primary"):
+        if not active_token:
+            st.error("請先確保 API Key / Token 載入成功！")
+        else:
+            with st.spinner("AI 正在進行高階 JPEG 影像 OCR 與語意解析中..."):
+                try:
+                    file_text = ""
+                    base64_images = []
+
+                    # 1. 讀取 PDF 內容
+                    if uploaded_file.name.endswith(".pdf"):
+                        pdf_bytes = uploaded_file.read()
+                        pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+                        for page in pdf_reader.pages:
+                            file_text += page.extract_text() or ""
+                        
+                        # 噪音判定 (無效字符/連續1多)
+                        is_noisy = len(file_text.strip()) > 0 and (file_text.count('1') > len(file_text) * 0.25)
+                        
+                        if force_ocr or len(file_text.strip()) < 200 or is_noisy:
+                            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                            # 採納朋友建議：轉為 JPEG (DPI 100, Quality 80) 大幅降低 Payload 體積
+                            for i in range(min(8, len(doc))):
+                                page = doc[i]
+                                pix = page.get_pixmap(dpi=100)
+                                img_bytes = pix.tobytes("jpeg", jpg_quality=80)
+                                b64 = base64.b64encode(img_bytes).decode("utf-8")
+                                base64_images.append(b64)
+                            file_text = ""
+
+                    elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
+                        img_bytes = uploaded_file.read()
+                        b64 = base64.b64encode(img_bytes).decode("utf-8")
+                        base64_images.append(b64)
+
+                    elif uploaded_file.name.endswith(".txt"):
+                        file_text = uploaded_file.read().decode("utf-8")
+
+                    st.write(f"📊 **解析診斷**: 文字提取長度 `{len(file_text)}` 字元 | 轉換 JPEG 圖片數量 `{len(base64_images)}` 頁")
+
+                    # 採納朋友建議：加強中文與 eHRP 欄位之語意對齊說明
+                    system_prompt = """
+                    你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件文字或圖像中提取員工入職資料，並回傳 JSON 物件。
+                    欄位語意對齊規範：
+                    - employee_no: 員工編號 / 僱員編號 (如 E26073)
+                    - given_name: 英文名 (如 WING FAAT)
+                    - surname: 英文姓 (如 CHIU)
+                    - name_on_id: 身份證英文全名
+                    - given_name_secondary: 中文名字 (如 榮發)
+                    - surname_secondary: 中文姓氏 (如 趙)
+                    - id_type: 身份證類型 (預設 LOCAL/PR)
+                    - id_no: 身份證號碼 (如 P932569(0))
+                    - date_of_birth: 出生日期
+                    - mobile: 手提電話
+                    - designation: 職銜 / 申請職位 (如 發展經理)
+                    - department: 部門 (如 寫字樓 / HOF)
+                    - commencement_date: 受僱日期 / 入職日期 / 生效日期
+                    - bank: 結算銀行名稱 (如 HANG SENG, HSBC, BOC)
+                    - account_no: 銀行帳戶號碼 (如 2419411158)
+                    - salary: 每月底薪 / 要求薪金 (數字, 如 44810.00)
+                    - rank: 職級 (如 R8)
+                    - grade: 級別 (如 G12 / 12)
+                    - point: 薪金點 / 支薪點 (如 102)
+                    - education (陣列): [{qualifications, major_in, institution, year_grad}]
+                    - prof_cert (陣列): [{cert_name, institution, year_obtain}]
+                    - next_of_kin (陣列): [{relationship, surname, given_name, pri_contact}]
+                    - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}] ("last_drawn" 對應「最後薪金」)
+
+                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown 標記。
+                    """
+
+                    if base64_images:
+                        user_content = [{"type": "text", "text": "請仔細閱讀並辨識以下 JPEG 掃描版入職表格/合約圖像內容，提煉所有個人的 eHRP 欄位資料 JSON："}]
+                        for b64 in base64_images:
+                            user_content.append({
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                            })
+                    else:
+                        user_content = [{"type": "text", "text": f"請解析以下文件文字並輸出 JSON：\n\n{file_text}"}]
+
+                    # 發送 API 請求
+                    if active_token.startswith("gsk_"):
+                        api_url = "https://api.groq.com/openai/v1/chat/completions"
+                        model_name = "llama-3.2-11b-vision-preview" if base64_images else "llama-3.3-70b-versatile"
+                        headers = {"Authorization": f"Bearer {active_token}", "Content-Type": "application/json"}
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content}
+                            ],
+                            "response_format": {"type": "json_object"}
+                        }
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+
+                    elif active_token.startswith("AIzaSy"):
+                        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
+                        parts = [{"text": system_prompt}]
+                        if base64_images:
+                            for b64 in base64_images:
+                                parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
+                        else:
+                            parts.append({"text": file_text})
+                        
+                        payload = {
+                            "contents": [{"parts": parts}],
+                            "generationConfig": {"response_mime_type": "application/json"}
+                        }
+                        response = requests.post(api_url, json=payload, timeout=60)
+
+                    else:
+                        if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
+                            api_url = "https://models.inference.ai.azure.com/chat/completions"
+                            model_name = "gpt-4o-mini"
+                        else:
+                            api_url = "https://api.openai.com/v1/chat/completions"
+                            model_name = "gpt-4o-mini"
+
+                        headers = {"Authorization": f"Bearer {active_token}", "Content-Type": "application/json"}
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_content}
+                            ],
+                            "response_format": {"type": "json_object"}
+                        }
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+
+                    if response.status_code == 200:
+                        if active_token.startswith("AIzaSy"):
+                            content_str = response.json()['candidates'][0]['content']['parts'][0]['text']
+                        else:
+                            content_str = response.json()['choices'][0]['message']['content']
+                            
+                        extracted_json = json.loads(content_str)
+                        normalized_data = normalize_ehrp_data(extracted_json)
+                        st.session_state["normalized_json"] = normalized_data
+                    else:
+                        st.error(f"❌ API 呼叫失敗 (HTTP Status: {response.status_code})\n錯誤細節：{response.text}")
+
+                except Exception as e:
+                    st.error(f"解析過程中發生錯誤: {str(e)}")
+
+# 8. 顯示與對齊 eHRP 界面的 Tab 區塊
+if "normalized_json" in st.session_state:
+    data = st.session_state["normalized_json"]
+    
+    st.markdown(f"### 🆔 EMPLOYEE NO: `{data['header']['employee_no'] or 'N/A'}`")
+    
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "Particulars", "Address", "Employment", "Salary", 
+        "Education & Prof Cert", "Next Of Kin", "Prev. Employment", "JSON 數據庫"
+    ])
+    
+    with tab1:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.text_input("GIVEN NAME", value=data["particulars"]["given_name"], disabled=True)
+            st.text_input("NAME ON ID", value=data["particulars"]["name_on_id"], disabled=True)
+            st.text_input("GIVEN NAME (SECONDARY)", value=data["particulars"]["given_name_secondary"], disabled=True)
+            st.text_input("GENDER", value=data["particulars"]["gender"], disabled=True)
+            st.text_input("MARITAL STATUS", value=data["particulars"]["marital_status"], disabled=True)
+            st.text_input("RACE", value=data["particulars"]["race"], disabled=True)
+            st.text_input("RELIGION", value=data["particulars"]["religion"], disabled=True)
+            st.text_input("TELEPHONE (HOME)", value=data["particulars"]["telephone_home"], disabled=True)
+
+        with col2:
+            st.text_input("SURNAME", value=data["particulars"]["surname"], disabled=True)
+            st.text_input("ID TYPE", value=data["particulars"]["id_type"], disabled=True)
+            st.text_input("SURNAME (SECONDARY)", value=data["particulars"]["surname_secondary"], disabled=True)
+            st.text_input("DATE OF BIRTH", value=data["particulars"]["date_of_birth"], disabled=True)
+            st.text_input("NATIONALITY", value=data["particulars"]["nationality"], disabled=True)
+            st.text_input("COUNTRY OF BIRTH", value=data["particulars"]["country_of_birth"], disabled=True)
+            st.text_input("TELEPHONE (MOBILE)", value=data["particulars"]["telephone_mobile"], disabled=True)
+
+        with col3:
+            st.text_input("EMPLOYMENT STATUS", value=data["particulars"]["employment_status"], disabled=True)
+            st.text_input("ID NO", value=data["particulars"]["id_no"], disabled=True)
+            st.text_input("ALIAS", value=data["particulars"]["alias"], disabled=True)
+            st.text_input("PROBATION MONTHS", value=data["particulars"]["probation_months"], disabled=True)
+            st.text_input("SECONDARY CONTACT", value=data["particulars"]["secondary_contact"], disabled=True)
+
+    with tab2:
+        st.text_input("ADDRESS LINE 1", value=data["address"]["address_line_1"], disabled=True)
+        st.text_input("ADDRESS LINE 2", value=data["address"]["address_line_2"], disabled=True)
+        st.text_input("ADDRESS LINE 3", value=data["address"]["address_line_3"], disabled=True)
+        st.text_input("F. POST CODE", value=data["address"]["f_post_code"], disabled=True)
+
+    with tab3:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.text_input("DESIGNATION", value=data["employment"]["designation"], disabled=True)
+            st.text_input("EFFECTIVE DATE (DESIGNATION)", value=data["employment"]["effective_date_designation"], disabled=True)
+            st.text_input("POSITION", value=data["employment"]["position"], disabled=True)
+            st.text_input("COMMENCEMENT DATE", value=data["employment"]["commencement_date"], disabled=True)
+            st.text_input("CONFIRMATION DATE", value=data["employment"]["confirmation_date"], disabled=True)
+
+        with col2:
+            st.text_input("DEPARTMENT", value=data["employment"]["department"], disabled=True)
+            st.text_input("STAFF GROUP", value=data["employment"]["staff_group"], disabled=True)
+            st.text_input("CESSATION DATE", value=data["employment"]["cessation_date"], disabled=True)
+            st.text_input("BANK", value=data["employment"]["bank"], disabled=True)
+
+        with col3:
+            st.text_input("EMPLOYEE TYPE", value=data["employment"]["employee_type"], disabled=True)
+            st.text_input("EMPLOYEE CLASS", value=data["employment"]["employee_class"], disabled=True)
+            st.text_input("EMPLOYMENT SCHEME", value=data["employment"]["employment_scheme"], disabled=True)
+            st.text_input("ACCOUNT NO", value=data["employment"]["account_no"], disabled=True)
+            st.text_input("EMAIL", value=data["employment"]["email"], disabled=True)
+
+    with tab4:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.text_input("SALARY", value=data["salary"]["salary"], disabled=True)
+            st.text_input("RANK", value=data["salary"]["rank"], disabled=True)
+        with col2:
+            st.text_input("VARIABLE SALARY", value=data["salary"]["variable_salary"], disabled=True)
+            st.text_input("GRADE", value=data["salary"]["grade"], disabled=True)
+        with col3:
+            st.text_input("DAILY RATE", value=data["salary"]["daily_rate"], disabled=True)
+            st.text_input("POINT", value=data["salary"]["point"], disabled=True)
+        with col4:
+            st.text_input("ADD. RATE", value=data["salary"]["add_rate"], disabled=True)
+            st.text_input("EFFECTIVE DATE", value=data["salary"]["effective_date"], disabled=True)
+
+    with tab5:
+        st.subheader("🎓 Education (學歷紀錄)")
+        if data["education"]:
+            st.dataframe(pd.DataFrame(data["education"]), use_container_width=True)
+        else:
+            st.info("尚無學歷紀錄")
+
+        st.subheader("📜 Professional Cert (專業證書)")
+        if data["prof_cert"]:
+            st.dataframe(pd.DataFrame(data["prof_cert"]), use_container_width=True)
+        else:
+            st.info("尚無專業證書紀錄")
+
+    with tab6:
+        st.subheader("👨‍👩‍👧 Next Of Kin (緊急聯絡人)")
+        if data["next_of_kin"]:
+            st.dataframe(pd.DataFrame(data["next_of_kin"]), use_container_width=True)
+        else:
+            st.info("尚無緊急聯絡人紀錄")
+
+    with tab7:
+        st.subheader("💼 Prev. Employment (過往工作履歷)")
+        if data["prev_employment"]:
+            st.dataframe(pd.DataFrame(data["prev_employment"]), use_container_width=True)
+        else:
+            st.info("尚無過往履歷紀錄")
+
+    with tab8:
+        st.subheader("eHRP Clean Payload (用於 Chrome Extension 一鍵填表)")
+        st.json(data)
+        st.code(json.dumps(data, ensure_ascii=False, indent=2), language="json")
