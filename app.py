@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets
+# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
 secret_token = ""
 token_source = ""
 
@@ -64,7 +64,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     st.markdown("""
     * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
     * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
-    * **人機協同與零幻視原則 (Zero Hallucination)**：模糊或不確定之欄位一律留空，不作臆測，確保 HR 數據 100% 精準。
+    * **人機協同與零幻視原則 (Zero Hallucination)**：模糊或不確定之欄位一律留空 `""`，不作臆測，確保 HR 數據 100% 精準。
     """)
 
 # 5. 側邊欄 (Sidebar)
@@ -216,7 +216,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (精準雙軌辨識引擎)
+# 7. 主介面邏輯 (包含即時進度狀態顯示)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -226,11 +226,12 @@ if uploaded_file:
         if not active_token:
             st.error("請先確保 API Key / Token 載入成功！")
         else:
-            with st.spinner("AI 正在進行精準影像 OCR 與語意解析中..."):
+            with st.status("🔍 智能解析進行中...", expanded=True) as status_box:
                 try:
                     file_text = ""
                     base64_images = []
 
+                    status_box.write("📄 正在讀取文件數據...")
                     if uploaded_file.name.endswith(".pdf"):
                         pdf_bytes = uploaded_file.read()
                         pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -240,14 +241,18 @@ if uploaded_file:
                         is_noisy = len(file_text.strip()) > 0 and (file_text.count('1') > len(file_text) * 0.25)
                         
                         if force_ocr or len(file_text.strip()) < 200 or is_noisy:
+                            status_box.write("🖼️ 檢測到影印本/掃描檔，正在渲染高解像度頁面圖片...")
                             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                            # 高清轉碼 (DPI 130)，涵蓋全卷關鍵頁面
-                            for i in range(min(12, len(doc))):
+                            max_pages = min(12, len(doc))
+                            
+                            progress_bar = st.progress(0)
+                            for i in range(max_pages):
                                 page = doc[i]
                                 pix = page.get_pixmap(dpi=130)
                                 img_bytes = pix.tobytes("jpeg", jpg_quality=85)
                                 b64 = base64.b64encode(img_bytes).decode("utf-8")
                                 base64_images.append(b64)
+                                progress_bar.progress((i + 1) / max_pages)
                             file_text = ""
 
                     elif uploaded_file.name.endswith((".png", ".jpg", ".jpeg")):
@@ -258,18 +263,18 @@ if uploaded_file:
                     elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
 
-                    st.write(f"📊 **解析診斷**: 文字提取長度 `{len(file_text)}` 字元 | 轉換 JPEG 圖片數量 `{len(base64_images)}` 頁")
+                    status_box.write(f"📊 **診斷資訊**: 向量文字長度 `{len(file_text)}` 字元 | 轉換圖片頁數 `{len(base64_images)}` 頁")
+                    status_box.write("🧠 正在發送至 AI 進行多模態語意與微觀欄位提取...")
 
-                    # 核心 Strict Prompt：要求 100% 精準，不確定則留空
                     system_prompt = """
                     你是一個極度嚴謹的 eHRP 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
                     【極重要原則 - 零猜測/零幻視】
                     1. 必須 100% 根據圖像中的清晰文字提取，不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作任何字詞！
-                    2. 常用部門請嚴格辨識：若是「寫字樓」，請填寫「寫字樓」或「HOF」，切勿錯看成「宮宇滙」或任何不存在的字詞。
+                    2. 常用部門請嚴格辨識：若是「寫字樓」，請填寫「寫字樓」或「HOF」，切勿錯看成任何不存在的字詞。
                     3. 欄位精準映射說明：
                        - employee_no: 員工編號 / 僱員編號 (例如 E26073)
-                       - given_name: 英文名 (例如 WING FAAT / CHIU WING FAAT 的名字部分)
+                       - given_name: 英文名 (例如 WING FAAT)
                        - surname: 英文姓 (例如 CHIU)
                        - name_on_id: 身份證英文全名
                        - given_name_secondary: 中文名字 (例如 榮發)
@@ -298,7 +303,6 @@ if uploaded_file:
                     else:
                         user_content = [{"type": "text", "text": f"請解析以下文件文字並輸出 JSON：\n\n{file_text}"}]
 
-                    # 發送 API 請求
                     if active_token.startswith("gsk_"):
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
                         model_name = "llama-3.2-11b-vision-preview" if base64_images else "llama-3.3-70b-versatile"
@@ -356,11 +360,14 @@ if uploaded_file:
                         extracted_json = json.loads(content_str)
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
+                        status_box.update(label="✅ 解析成功！格式已轉換並對齊 eHRP 結構。", state="complete", expanded=False)
                     else:
-                        st.error(f"❌ API 呼叫失敗 (HTTP Status: {response.status_code})\n錯誤細節：{response.text}")
+                        status_box.update(label="❌ API 呼叫失敗", state="error")
+                        st.error(f"HTTP Status: {response.status_code}\n錯誤細節：{response.text}")
 
                 except Exception as e:
-                    st.error(f"解析過程中發生錯誤: {str(e)}")
+                    status_box.update(label="❌ 處理過程中發生錯誤", state="error")
+                    st.error(f"錯誤訊息: {str(e)}")
 
 # 8. 顯示與對齊 eHRP 界面的 Tab 區塊
 if "normalized_json" in st.session_state:
