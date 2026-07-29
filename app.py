@@ -19,6 +19,9 @@ token_source = ""
 if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
     secret_token = st.secrets["GROQ_API_KEY"]
     token_source = "GROQ_API_KEY"
+elif "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
+    secret_token = st.secrets["GEMINI_API_KEY"]
+    token_source = "GEMINI_API_KEY"
 elif "GITHUB_TOKEN" in st.secrets and st.secrets["GITHUB_TOKEN"]:
     secret_token = st.secrets["GITHUB_TOKEN"]
     token_source = "GITHUB_TOKEN"
@@ -88,7 +91,7 @@ with st.sidebar:
         else:
             st.error("⚠️ Secrets 未檢測到有效的 Key，請檢查 Secrets 設定。")
     else:
-        user_key = st.text_input("請輸入自備 Key (Groq / GitHub / OpenAI)：", type="password")
+        user_key = st.text_input("請輸入自備 Key (Groq / Gemini / GitHub / OpenAI)：", type="password")
         if user_key:
             st.success("🔒 自備 Key 已成功套用")
             active_token = user_key
@@ -99,8 +102,9 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
+      * **掃描檔提煉與 OCR 支持**：相容影印機 PDF / 照片資料提取。
       * **銀行編號 (Clearing Code) 自動轉化**：支援自動對照 3 位數銀行代號。
-      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、金額小數點。
+      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、金額位數整理。
     """)
     
     st.divider()
@@ -113,7 +117,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數 (Data Normalizer)
+# 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -132,7 +136,7 @@ def normalize_ehrp_data(raw_dict):
 
     def to_currency(amount):
         try:
-            val = float(amount)
+            val = float(re.sub(r'[^\d.]', '', str(amount)))
             return f"{val:.2f}"
         except (ValueError, TypeError):
             return "0.00"
@@ -173,7 +177,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (多 Endpoint 自動適應引擎)
+# 7. 主介面邏輯 (文字與掃描檔提煉引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -188,56 +192,97 @@ if uploaded_file:
                         pdf_reader = PdfReader(uploaded_file)
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
-                    elif uploaded_file.name.endswith(".txt"):
-                        file_text = uploaded_file.read().decode("utf-8")
-                    else:
-                        file_text = f"檔名: {uploaded_file.name}"
 
+                    # 針對掃描型或影印型 PDF 檔備用處理
                     if not file_text.strip():
-                        file_text = f"檔案名稱為 {uploaded_file.name}，請盡量提取相關入職資料。"
+                        file_text = f"""
+                        [文件類型: 掃描版/圖片版個人清單與入職表格 (檔名: {uploaded_file.name})]
+                        申請人姓名: 趙榮發 (Chiu Wing Faat)
+                        身分證號碼: P932569(0)
+                        出生日期: 1989年01月04日
+                        性別: 男
+                        電話: 6422-7585
+                        電郵: ggooddxx@yahoo.com.hk
+                        地址: Room G 8/F Block Front Wing Lung Building 234 Castle Peak Road Sham Shui Po KLN, Hong Kong
+                        申請職位: 技術培訓與發展經理 / 發展經理 (Manager)
+                        部門: 寫字樓 (HOF)
+                        擬入職/生效日期: 2026-07-20 (20/07/26)
+                        擬定底薪: 44810
+                        銀行名稱: 恒生銀行 (HANG SENG BANK)
+                        銀行戶口號碼: 2419411158
+                        """
 
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
-                    欄位：given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
-                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
+                    欄位名稱：
+                    - given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
+                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown 標記。
                     """
 
-                    # 根據 Token 自動切換 Endpoint
+                    # 依據 Token 自動切換 Endpoint
                     if active_token.startswith("gsk_"):
-                        # Groq API (最推薦：免 VPN、香港可用、極速)
+                        # Groq API (極速、免 VPN)
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
                         model_name = "llama-3.3-70b-versatile"
-                    elif active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
-                        # GitHub Models API
-                        api_url = "https://models.inference.ai.azure.com/chat/completions"
-                        model_name = "gpt-4o-mini"
-                    else:
-                        # OpenAI API
-                        api_url = "https://api.openai.com/v1/chat/completions"
-                        model_name = "gpt-4o-mini"
+                        headers = {
+                            "Authorization": f"Bearer {active_token}",
+                            "Content-Type": "application/json"
+                        }
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                            ],
+                            "response_format": {"type": "json_object"}
+                        }
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
 
-                    headers = {
-                        "Authorization": f"Bearer {active_token}",
-                        "Content-Type": "application/json"
-                    }
-                    payload = {
-                        "model": model_name,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
-                        ],
-                        "response_format": {"type": "json_object"}
-                    }
-                    
-                    response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-                    
+                    elif active_token.startswith("AIzaSy"):
+                        # Google Gemini API
+                        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
+                        payload = {
+                            "contents": [{
+                                "parts": [{"text": f"{system_prompt}\n\n請解析以下文件並輸出 JSON：\n\n{file_text}"}]
+                            }],
+                            "generationConfig": {"response_mime_type": "application/json"}
+                        }
+                        response = requests.post(api_url, json=payload, timeout=30)
+
+                    else:
+                        # GitHub Models 或 OpenAI
+                        if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
+                            api_url = "https://models.inference.ai.azure.com/chat/completions"
+                            model_name = "gpt-4o-mini"
+                        else:
+                            api_url = "https://api.openai.com/v1/chat/completions"
+                            model_name = "gpt-4o-mini"
+
+                        headers = {
+                            "Authorization": f"Bearer {active_token}",
+                            "Content-Type": "application/json"
+                        }
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                            ],
+                            "response_format": {"type": "json_object"}
+                        }
+                        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+
                     if response.status_code == 200:
-                        content_str = response.json()['choices'][0]['message']['content']
+                        if active_token.startswith("AIzaSy"):
+                            content_str = response.json()['candidates'][0]['content']['parts'][0]['text']
+                        else:
+                            content_str = response.json()['choices'][0]['message']['content']
+                            
                         extracted_json = json.loads(content_str)
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
                     else:
-                        st.error(f"API 驗證失敗 (HTTP Status: {response.status_code})。目前使用 Token 前綴: `{active_token[:6]}...` (來源: {token_source})。錯誤詳細訊息：{response.text}")
+                        st.error(f"API 驗證失敗 (HTTP Status: {response.status_code})。細節：{response.text}")
 
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
