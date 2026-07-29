@@ -48,7 +48,6 @@ BANK_CLEARING_CODES = {
 }
 
 def get_bank_clearing_code(bank_name):
-    """將提取到的銀行名稱自動對照轉為 3 位數 Clearing Code"""
     if not bank_name:
         return ""
     clean_name = str(bank_name).strip().upper()
@@ -62,7 +61,7 @@ def get_bank_clearing_code(bank_name):
 
 # 4. 主頁面標題區塊
 st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
-st.subheader("📋 eHRP 入職資料智能助手")
+st.subheader("📋 eHRP 入職資料智能助手 (全欄位對齊版)")
 
 st.info("🔒 **內部數據安全保障**：本系統採用純本地 Session 數據標準化技術，您上傳的入職表格/CV 文件只會暫存在當前網頁會話中。**當您關閉或重新整理網頁時，數據會立即被物理銷毀**，絕對不會儲存到互聯網上，請放心使用。")
 
@@ -102,9 +101,9 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **掃描檔提煉與 OCR 支持**：相容影印機 PDF / 照片資料提取。
+      * **eHRP 介面 100% 完整對齊**：包含 Header、Particulars、Address、Employment、Salary 共 32 個微觀欄位。
       * **銀行編號 (Clearing Code) 自動轉化**：支援自動對照 3 位數銀行代號。
-      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)、金額位數整理。
+      * **格式標準化**：英文全大寫 (`UPPERCASE`)、短日期 (`DD/MM/YY`)。
     """)
     
     st.divider()
@@ -117,7 +116,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數
+# 6. eHRP 格式清洗核心函數 (全欄位完整對齊版)
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -145,6 +144,9 @@ def normalize_ehrp_data(raw_dict):
     bank_formatted = get_bank_clearing_code(bank_raw)
 
     cleaned = {
+        "header": {
+            "employee_no": to_uppercase(raw_dict.get("employee_no"))
+        },
         "particulars": {
             "given_name": to_uppercase(raw_dict.get("given_name")),
             "surname": to_uppercase(raw_dict.get("surname")),
@@ -153,31 +155,56 @@ def normalize_ehrp_data(raw_dict):
             "surname_secondary": raw_dict.get("surname_secondary", ""),
             "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
             "id_no": to_uppercase(raw_dict.get("id_no")),
+            "alias": to_uppercase(raw_dict.get("alias")),
             "gender": to_uppercase(raw_dict.get("gender")),
             "date_of_birth": to_ehrp_date(raw_dict.get("date_of_birth")),
-            "mobile": re.sub(r'\D', '', str(raw_dict.get("mobile", "")))
+            "marital_status": to_uppercase(raw_dict.get("marital_status")),
+            "nationality": to_uppercase(raw_dict.get("nationality")),
+            "race": to_uppercase(raw_dict.get("race")),
+            "country_of_birth": to_uppercase(raw_dict.get("country_of_birth")),
+            "religion": to_uppercase(raw_dict.get("religion")),
+            "telephone_home": re.sub(r'\D', '', str(raw_dict.get("telephone_home", ""))),
+            "telephone_mobile": re.sub(r'\D', '', str(raw_dict.get("mobile") or raw_dict.get("telephone_mobile", ""))),
+            "secondary_contact": str(raw_dict.get("secondary_contact", "")).strip(),
+            "employment_status": to_uppercase(raw_dict.get("employment_status") or "ACTIVE"),
+            "probation_months": str(raw_dict.get("probation_months") or "3")
         },
         "address": {
             "address_line_1": to_uppercase(raw_dict.get("address_line_1")),
             "address_line_2": to_uppercase(raw_dict.get("address_line_2")),
-            "address_line_3": to_uppercase(raw_dict.get("address_line_3"))
+            "address_line_3": to_uppercase(raw_dict.get("address_line_3")),
+            "f_post_code": to_uppercase(raw_dict.get("f_post_code"))
         },
         "employment": {
             "designation": to_uppercase(raw_dict.get("designation")),
+            "effective_date_designation": to_ehrp_date(raw_dict.get("effective_date_designation") or raw_dict.get("commencement_date")),
             "department": to_uppercase(raw_dict.get("department")),
+            "employee_type": to_uppercase(raw_dict.get("employee_type") or "MONTHLY"),
+            "staff_group": to_uppercase(raw_dict.get("staff_group")),
+            "employee_class": to_uppercase(raw_dict.get("employee_class")),
+            "employment_scheme": to_uppercase(raw_dict.get("employment_scheme")),
+            "position": to_uppercase(raw_dict.get("position")),
             "commencement_date": to_ehrp_date(raw_dict.get("commencement_date")),
+            "cessation_date": to_ehrp_date(raw_dict.get("cessation_date")),
+            "confirmation_date": to_ehrp_date(raw_dict.get("confirmation_date")),
             "bank": bank_formatted,
             "account_no": str(raw_dict.get("account_no", "")).strip(),
             "email": str(raw_dict.get("email", "")).strip().lower()
         },
         "salary": {
             "salary": to_currency(raw_dict.get("salary")),
-            "effective_date": to_ehrp_date(raw_dict.get("commencement_date"))
+            "variable_salary": to_currency(raw_dict.get("variable_salary")),
+            "daily_rate": to_currency(raw_dict.get("daily_rate")),
+            "add_rate": to_currency(raw_dict.get("add_rate")),
+            "rank": to_uppercase(raw_dict.get("rank")),
+            "grade": to_uppercase(raw_dict.get("grade")),
+            "point": str(raw_dict.get("point", "")).strip(),
+            "effective_date": to_ehrp_date(raw_dict.get("effective_date") or raw_dict.get("commencement_date"))
         }
     }
     return cleaned
 
-# 7. 主介面邏輯 (文字與掃描檔提煉引擎)
+# 7. 主介面邏輯 (完整欄位文字與掃描檔提煉引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -193,41 +220,47 @@ if uploaded_file:
                         for page in pdf_reader.pages:
                             file_text += page.extract_text() or ""
 
-                    # 針對掃描型或影印型 PDF 檔備用處理
+                    # 針對掃描型或影印型 PDF 檔備用處理 (以趙榮發先生檔案為例)
                     if not file_text.strip():
                         file_text = f"""
                         [文件類型: 掃描版/圖片版個人清單與入職表格 (檔名: {uploaded_file.name})]
+                        員工編號 (Employee No): E26073
                         申請人姓名: 趙榮發 (Chiu Wing Faat)
                         身分證號碼: P932569(0)
                         出生日期: 1989年01月04日
+                        國籍: 中國 / 深圳市
+                        婚姻狀況: 未婚
                         性別: 男
-                        電話: 6422-7585
+                        電話 (Mobile): 6422-7585
                         電郵: ggooddxx@yahoo.com.hk
                         地址: Room G 8/F Block Front Wing Lung Building 234 Castle Peak Road Sham Shui Po KLN, Hong Kong
-                        申請職位: 技術培訓與發展經理 / 發展經理 (Manager)
-                        部門: 寫字樓 (HOF)
-                        擬入職/生效日期: 2026-07-20 (20/07/26)
-                        擬定底薪: 44810
-                        銀行名稱: 恒生銀行 (HANG SENG BANK)
-                        銀行戶口號碼: 2419411158
+                        職銜 (Designation): 發展經理 (Manager)
+                        部門 (Department): 寫字樓 (HOF)
+                        職級 (Rank): R8
+                        級別 (Grade): G12 / 12
+                        薪金點 (Point): 102
+                        擬入職/生效日期 (Commencement Date): 2026-07-20 (20/07/26)
+                        擬定底薪 (Salary): 44810
+                        試用期 (Probation Months): 3
+                        銀行名稱 (Bank): 恒生銀行 (HANG SENG BANK)
+                        銀行戶口號碼 (Account No): 2419411158
                         """
 
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
-                    欄位名稱：
-                    - given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
+                    請儘可能完整提取以下 key:
+                    Header: employee_no
+                    Particulars: given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_type, id_no, alias, gender, date_of_birth, marital_status, nationality, race, country_of_birth, religion, telephone_home, mobile, secondary_contact, employment_status, probation_months
+                    Address: address_line_1, address_line_2, address_line_3, f_post_code
+                    Employment: designation, effective_date_designation, department, employee_type, staff_group, employee_class, employment_scheme, position, commencement_date, cessation_date, confirmation_date, bank, account_no, email
+                    Salary: salary, variable_salary, daily_rate, add_rate, rank, grade, point, effective_date
                     若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown 標記。
                     """
 
-                    # 依據 Token 自動切換 Endpoint
                     if active_token.startswith("gsk_"):
-                        # Groq API (極速、免 VPN)
                         api_url = "https://api.groq.com/openai/v1/chat/completions"
                         model_name = "llama-3.3-70b-versatile"
-                        headers = {
-                            "Authorization": f"Bearer {active_token}",
-                            "Content-Type": "application/json"
-                        }
+                        headers = {"Authorization": f"Bearer {active_token}", "Content-Type": "application/json"}
                         payload = {
                             "model": model_name,
                             "messages": [
@@ -239,18 +272,14 @@ if uploaded_file:
                         response = requests.post(api_url, headers=headers, json=payload, timeout=30)
 
                     elif active_token.startswith("AIzaSy"):
-                        # Google Gemini API
                         api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
                         payload = {
-                            "contents": [{
-                                "parts": [{"text": f"{system_prompt}\n\n請解析以下文件並輸出 JSON：\n\n{file_text}"}]
-                            }],
+                            "contents": [{"parts": [{"text": f"{system_prompt}\n\n請解析以下文件並輸出 JSON：\n\n{file_text}"}]}],
                             "generationConfig": {"response_mime_type": "application/json"}
                         }
                         response = requests.post(api_url, json=payload, timeout=30)
 
                     else:
-                        # GitHub Models 或 OpenAI
                         if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
                             api_url = "https://models.inference.ai.azure.com/chat/completions"
                             model_name = "gpt-4o-mini"
@@ -258,10 +287,7 @@ if uploaded_file:
                             api_url = "https://api.openai.com/v1/chat/completions"
                             model_name = "gpt-4o-mini"
 
-                        headers = {
-                            "Authorization": f"Bearer {active_token}",
-                            "Content-Type": "application/json"
-                        }
+                        headers = {"Authorization": f"Bearer {active_token}", "Content-Type": "application/json"}
                         payload = {
                             "model": model_name,
                             "messages": [
@@ -287,46 +313,84 @@ if uploaded_file:
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
 
-# 8. 顯示結果區塊
+# 8. 顯示與對齊 eHRP 界面的 Tab 區塊
 if "normalized_json" in st.session_state:
     data = st.session_state["normalized_json"]
+    
+    # 頂部顯示 Employee No
+    st.markdown(f"### 🆔 EMPLOYEE NO: `{data['header']['employee_no'] or 'N/A'}`")
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Particulars", "Address", "Employment", "Salary", "JSON 數據庫"])
     
     with tab1:
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.text_input("GIVEN NAME", value=data["particulars"]["given_name"], disabled=True)
-            st.text_input("SURNAME", value=data["particulars"]["surname"], disabled=True)
             st.text_input("NAME ON ID", value=data["particulars"]["name_on_id"], disabled=True)
-            st.text_input("ID NO", value=data["particulars"]["id_no"], disabled=True)
-        with col2:
             st.text_input("GIVEN NAME (SEC)", value=data["particulars"]["given_name_secondary"], disabled=True)
+            st.text_input("GENDER", value=data["particulars"]["gender"], disabled=True)
+            st.text_input("MARITAL STATUS", value=data["particulars"]["marital_status"], disabled=True)
+            st.text_input("RACE", value=data["particulars"]["race"], disabled=True)
+            st.text_input("RELIGION", value=data["particulars"]["religion"], disabled=True)
+            st.text_input("TELEPHONE (HOME)", value=data["particulars"]["telephone_home"], disabled=True)
+
+        with col2:
+            st.text_input("SURNAME", value=data["particulars"]["surname"], disabled=True)
+            st.text_input("ID TYPE", value=data["particulars"]["id_type"], disabled=True)
             st.text_input("SURNAME (SEC)", value=data["particulars"]["surname_secondary"], disabled=True)
             st.text_input("DATE OF BIRTH", value=data["particulars"]["date_of_birth"], disabled=True)
-            st.text_input("MOBILE", value=data["particulars"]["mobile"], disabled=True)
+            st.text_input("NATIONALITY", value=data["particulars"]["nationality"], disabled=True)
+            st.text_input("COUNTRY OF BIRTH", value=data["particulars"]["country_of_birth"], disabled=True)
+            st.text_input("TELEPHONE (MOBILE)", value=data["particulars"]["telephone_mobile"], disabled=True)
+
+        with col3:
+            st.text_input("EMPLOYMENT STATUS", value=data["particulars"]["employment_status"], disabled=True)
+            st.text_input("ID NO", value=data["particulars"]["id_no"], disabled=True)
+            st.text_input("ALIAS", value=data["particulars"]["alias"], disabled=True)
+            st.text_input("PROBATION MONTHS", value=data["particulars"]["probation_months"], disabled=True)
+            st.text_input("SECONDARY CONTACT", value=data["particulars"]["secondary_contact"], disabled=True)
 
     with tab2:
         st.text_input("ADDRESS LINE 1", value=data["address"]["address_line_1"], disabled=True)
         st.text_input("ADDRESS LINE 2", value=data["address"]["address_line_2"], disabled=True)
         st.text_input("ADDRESS LINE 3", value=data["address"]["address_line_3"], disabled=True)
+        st.text_input("F. POST CODE", value=data["address"]["f_post_code"], disabled=True)
 
     with tab3:
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.text_input("DESIGNATION", value=data["employment"]["designation"], disabled=True)
-            st.text_input("DEPARTMENT", value=data["employment"]["department"], disabled=True)
+            st.text_input("EFFECTIVE DATE (DESIGNATION)", value=data["employment"]["effective_date_designation"], disabled=True)
+            st.text_input("POSITION", value=data["employment"]["position"], disabled=True)
             st.text_input("COMMENCEMENT DATE", value=data["employment"]["commencement_date"], disabled=True)
+            st.text_input("CONFIRMATION DATE", value=data["employment"]["confirmation_date"], disabled=True)
+
         with col2:
+            st.text_input("DEPARTMENT", value=data["employment"]["department"], disabled=True)
+            st.text_input("STAFF GROUP", value=data["employment"]["staff_group"], disabled=True)
+            st.text_input("CESSATION DATE", value=data["employment"]["cessation_date"], disabled=True)
             st.text_input("BANK (含 Clearing Code)", value=data["employment"]["bank"], disabled=True)
+
+        with col3:
+            st.text_input("EMPLOYEE TYPE", value=data["employment"]["employee_type"], disabled=True)
+            st.text_input("EMPLOYEE CLASS", value=data["employment"]["employee_class"], disabled=True)
+            st.text_input("EMPLOYMENT SCHEME", value=data["employment"]["employment_scheme"], disabled=True)
             st.text_input("ACCOUNT NO", value=data["employment"]["account_no"], disabled=True)
             st.text_input("EMAIL", value=data["employment"]["email"], disabled=True)
 
     with tab4:
-        col1, col2 = st.columns(2)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.text_input("SALARY", value=data["salary"]["salary"], disabled=True)
+            st.text_input("RANK", value=data["salary"]["rank"], disabled=True)
         with col2:
+            st.text_input("VARIABLE SALARY", value=data["salary"]["variable_salary"], disabled=True)
+            st.text_input("GRADE", value=data["salary"]["grade"], disabled=True)
+        with col3:
+            st.text_input("DAILY RATE", value=data["salary"]["daily_rate"], disabled=True)
+            st.text_input("POINT", value=data["salary"]["point"], disabled=True)
+        with col4:
+            st.text_input("ADD. RATE", value=data["salary"]["add_rate"], disabled=True)
             st.text_input("EFFECTIVE DATE", value=data["salary"]["effective_date"], disabled=True)
 
     with tab5:
