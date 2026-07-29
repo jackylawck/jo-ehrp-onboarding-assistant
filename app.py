@@ -33,10 +33,10 @@ elif "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
     secret_token = st.secrets["OPENAI_API_KEY"]
     token_source = "OPENAI_API_KEY"
 
-# 3.1 香港常見銀行名稱標準化對照表
+# 3.1 香港常見銀行名稱標準化對照表 (含拼音與常見錯字矯正)
 BANK_MAP = {
     "HSBC": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行", "004"],
-    "HANG SENG": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行", "024"],
+    "HANG SENG": ["HANG SENG", "HANG SENG BANK", "YANG SENG", "YANG SENG BANK", "恒生", "恒生銀行", "024"],
     "BOC": ["BANK OF CHINA", "BOC", "中銀", "中國銀行", "012"],
     "SCB": ["STANDARD CHARTERED", "SCB", "渣打", "渣打銀行", "003"],
     "CITIBANK": ["CITIBANK", "CITI", "花旗", "花旗銀行", "006"],
@@ -73,25 +73,16 @@ DEPT_MAP = {
 }
 
 def normalize_dept_name(dept_str):
-    """將部門名稱標準化為系統代碼 (如 '寫字樓' → 'HOF')"""
     if not dept_str:
         return ""
-    
-    dept_clean = str(dept_str).strip()
-    dept_upper = dept_clean.upper()
-    
-    # 1. 直接比對對照表 (不區分大小寫)
+    dept_clean = str(dept_str).strip().upper()
     for key, code in DEPT_MAP.items():
-        if dept_upper == key.upper():
+        if dept_clean == key.upper():
             return code
-    
-    # 2. 部分比對 (例如 "寫字樓經理" → "HOF")
     for key, code in DEPT_MAP.items():
-        if key.upper() in dept_upper:
+        if key.upper() in dept_clean:
             return code
-    
-    # 3. 若都無法對應，保留原始值轉大寫
-    return dept_upper
+    return dept_clean
 
 # 4. 主頁面標題區塊
 st.title("🏗️ 東淦工程有限公司 (Jumbo Orient)")
@@ -103,7 +94,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     st.markdown("""
     * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
     * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
-    * **指向性核對原則 (Source Grounding)**：嚴格以合約核對條件、以證件核對身份，輔以 CV 作補充，打造 100% 精準 eHRP 數據。
+    * **指向性核對原則 (Source Grounding)**：嚴格以合約第 3 條核對條款、以證件核對身份，輔以申請表補充緊急聯絡人。
     """)
 
 # 5. 側邊欄 (Sidebar)
@@ -135,10 +126,9 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **指向性資料來源核對**：依據身份證、銀行卡與僱傭合約之權重分配，防範資料衝突。
-      * **部門代碼自動映射**：支援中文部門名稱無縫轉化為 eHRP 代碼 (如 HOF、PMD)。
-      * **高精準 Vision OCR**：杜絕錯字幻視，不確定欄位寧缺勿濫。
-      * **eHRP 系統介面 1:1 精確對齊**。
+      * **合約第 3 條指向性提取**：精準提煉 Rank、Grade、Point 及底薪。
+      * **中文姓名自動拆分**：自動校正中文姓氏與名字欄位錯位。
+      * **部門代碼與銀行名稱校正**：自動映射標準代碼與校正 OCR 錯字。
     """)
     
     st.divider()
@@ -150,7 +140,7 @@ with st.sidebar:
     st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數 (純動態清洗，不含個人資料)
+# 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -190,6 +180,17 @@ def normalize_ehrp_data(raw_dict):
     else:
         name_on_id = f"{surname} {given_name}".strip()
 
+    # 中文姓名拆分校正邏輯
+    raw_given_sec = str(raw_dict.get("given_name_secondary", "")).strip()
+    raw_surname_sec = str(raw_dict.get("surname_secondary", "")).strip()
+
+    if not raw_surname_sec and len(raw_given_sec) >= 2 and re.match(r'^[\u4e00-\u9fff]+$', raw_given_sec):
+        surname_secondary = raw_given_sec[0]
+        given_name_secondary = raw_given_sec[1:]
+    else:
+        surname_secondary = raw_surname_sec
+        given_name_secondary = raw_given_sec
+
     cleaned = {
         "header": {
             "employee_no": to_uppercase(raw_dict.get("employee_no"))
@@ -198,8 +199,8 @@ def normalize_ehrp_data(raw_dict):
             "given_name": given_name,
             "surname": surname,
             "name_on_id": name_on_id,
-            "given_name_secondary": str(raw_dict.get("given_name_secondary", "")).strip(),
-            "surname_secondary": str(raw_dict.get("surname_secondary", "")).strip(),
+            "given_name_secondary": given_name_secondary,
+            "surname_secondary": surname_secondary,
             "id_type": to_uppercase(raw_dict.get("id_type") or "LOCAL/PR"),
             "id_no": to_uppercase(raw_dict.get("id_no")),
             "alias": to_uppercase(raw_dict.get("alias")),
@@ -255,7 +256,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (完全匿名通用提示詞)
+# 7. 主介面邏輯 (精準指向性 Prompt)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -303,48 +304,60 @@ if uploaded_file:
                         file_text = uploaded_file.read().decode("utf-8")
 
                     status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
-                    status_box.write("🧠 正在根據「指向性來源原則」進行交叉比對與精準提煉...")
+                    status_box.write("🧠 正在根據「合約第 3 條與指向性來源原則」精準提煉...")
 
-                    # 完全通用的提示詞，加入銀行與部門的增強引導
+                    # 【指向合約第 3 條】核心 Prompt
                     system_prompt = """
                     你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
 
-                    【極重要：資料來源優先級與指向性核對原則】
-                    為確保 HR 數據 100% 精準，遇到資料衝突時，請嚴格按以下文檔優先級提取資料：
-                    1. 核心入職條件：職銜 (Designation)、部門 (Department)、薪金 (Salary)、職級/級別 (Rank/Grade/Point)、生效日期 -> 必須以「月薪僱傭合約」及「面試評估表/錄用條款」為絕對準則。
-                    2. 個人身份核對：
-                       - 身份證英文全名 (name_on_id)、身份證號碼 (id_no)、出生日期、性別 -> 必須以「香港身份證副本」圖像為絕對準則。
-                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」卡面資訊為準。若無銀行卡影本，請檢視合約中有無『經銀行自動轉賬』字樣，並嘗試從上下文推斷銀行名稱（如匯豐、恒生、中銀等），若無法確定則留空。
-                       - 居住地址 (address) -> 優先參考「住址證明影印本」，其次為「職位申請表」。
-                    3. 補充背景資料：聯絡電話、電郵、緊急聯絡人 (Next of Kin)、學歷 (Education)、過往履歷 (Prev_Employment) -> 請從「職位申請表」或「CV」中提取。
+                    【資料來源優先級與指向性核對原則】
+                    1. 僱傭條款與薪酬結構 (salary, rank, grade, point)：
+                       - **必須明確從「東淦工程有限公司 月薪僱傭合約」第 3 條「工資及職級」提煉**！
+                       - 合約第 3 條標準格式為：「每月底薪$XX,XXX港元; 薪金計劃支薪點XXX; 級別GXX: 職級 RXX」
+                       - 請精準提取：
+                         * salary: 每月底薪數字 (如 44810.00)
+                         * point: 薪金計劃支薪點 (如 102)
+                         * grade: 級別 (如 G12 或 12)
+                         * rank: 職級 (如 R8)
+                       - 受僱日期 (commencement_date): 從合約第 1 條「受僱日期」提煉 (如 2026年7月20日 -> 20/07/26)。
+
+                    2. 個人身份與中文姓名拆分：
+                       - 英文姓名與身份證號碼 -> 必須以「香港身份證副本」為絕對準則 (given_name: WING FAAT, surname: CHIU)。
+                       - 中文姓名拆分 -> surname_secondary 填寫「中文姓氏」(例如 趙)，given_name_secondary 填寫「中文名字」(例如 榮發)，切勿把全名擠在名字欄！
+
+                    3. 銀行資料 (bank, account_no)：
+                       - 必須以「銀行卡/提款卡影印本」卡面文字或「職員證簽收及扣薪授權書」上的戶口號碼為準。銀行名稱若是「恒生銀行 / HANG SENG BANK」，請填寫 HANG SENG，切勿拼錯為 YANG SENG。
+
+                    4. 緊急聯絡人 (next_of_kin)：
+                       - **必須優先從「職位申請表」中的「緊急聯絡人」區塊提取** (例如: relationship: MOTHER, surname: 陳, given_name: 月笑, pri_contact: 97273758)。
 
                     【極重要原則 - 零猜測/零幻視】
-                    1. 不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
-                    2. 部門請嚴格辨識原文，若是「寫字樓」或「寫字楼」，請精準提取，切勿錯看成不存在的字詞，若模糊無法確定請填 ""。
+                    不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
 
                     【欄位結構】
-                    - employee_no: 員工編號 / 僱員編號
-                    - given_name: 英文名
-                    - surname: 英文姓
-                    - given_name_secondary: 中文名字
-                    - surname_secondary: 中文姓氏
-                    - designation: 職銜
-                    - department: 所屬部門 / 組別
+                    - employee_no: 員工編號 / 僱員編號 (如 E26073)
+                    - given_name: 英文名 (如 WING FAAT)
+                    - surname: 英文姓 (如 CHIU)
+                    - given_name_secondary: 中文名字 (如 榮發)
+                    - surname_secondary: 中文姓氏 (如 趙)
+                    - designation: 職銜 (如 發展經理)
+                    - department: 所屬部門 / 組別 (如 寫字樓 / HOF)
                     - commencement_date: 生效日期 / 受僱日期
-                    - bank: 結算銀行名稱
-                    - account_no: 銀行帳號
+                    - bank: 結算銀行名稱 (如 HANG SENG, HSBC, BOC)
+                    - account_no: 銀行帳號 (如 2419411158)
                     - salary: 每月底薪 / 工資金額
-                    - rank: 職級
-                    - grade: 級別
-                    - point: 薪金點 / 支薪點
+                    - rank: 職級 (如 R8)
+                    - grade: 級別 (如 G12)
+                    - point: 薪金點 / 支薪點 (如 102)
                     - address_line_1, address_line_2, address_line_3: 居住地址
-                    - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}] ("last_drawn" 對應「最後薪金」)
+                    - next_of_kin (陣列): [{relationship, surname, given_name, pri_contact}]
+                    - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}]
 
                     必須只回傳 valid JSON 物件，不要包含 Markdown 標記或額外解釋。
                     """
 
                     if base64_images:
-                        user_content = [{"type": "text", "text": "請仔細辨識以下文件與證件副本，並嚴格遵循「指向性核對原則」提煉 eHRP 個人資料 JSON："}]
+                        user_content = [{"type": "text", "text": "請仔細辨識以下文件與證件副本，並嚴格遵循「合約第 3 條與指向性核對原則」提煉 eHRP 個人資料 JSON："}]
                         for b64 in base64_images:
                             user_content.append({
                                 "type": "image_url",
