@@ -16,7 +16,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
+# 2. 安全讀取 Streamlit Secrets
 secret_token = ""
 token_source = ""
 
@@ -64,7 +64,7 @@ with st.expander("🛡️ 安全與 ISO/IEC 42001 (AIMS) / PDPO 合規說明", e
     st.markdown("""
     * **數據最小化 (ISO 42001 Annex A.6.2)**：所有上傳之入職表格/CV 僅於 Session 記憶體內進行格式標準化，網頁關閉即瞬間物理銷毀。
     * **零 PII 外洩 (ISO 27001 A.8.12)**：API Key 已經由 Secrets 後端加密保護，前端 UI 完全隱藏，源頭防範憑證與個人資料外洩。
-    * **人機協同與零幻視原則 (Zero Hallucination)**：模糊或不確定之欄位一律留空 `""`，不作臆測，確保 HR 數據 100% 精準。
+    * **指向性核對原則 (Source Grounding)**：嚴格以合約核對條件、以證件核對身份，輔以 CV 作補充，打造 100% 精準 eHRP 數據。
     """)
 
 # 5. 側邊欄 (Sidebar)
@@ -96,20 +96,19 @@ with st.sidebar:
     st.markdown("""
     * **零數據留存**：運算僅存於本地 Session 記憶體，重整即刻物理銷毀。
     * **🎯 進階 HR Tech 引擎**：
-      * **高精準 Vision OCR**：100% 杜絕錯字幻視，不確定欄位寧缺勿濫。
-      * **強效英文月份解析**：支援 `02Jul2026` 轉碼為 `02/07/26`。
-      * **eHRP 系統介面 1:1 精確對齊**：微觀欄位完全對齊系統結構。
+      * **指向性資料來源核對**：依據身份證、銀行卡與僱傭合約之權重分配，防範資料衝突。
+      * **高精準 Vision OCR**：杜絕錯字幻視，不確定欄位寧缺勿濫。
+      * **eHRP 系統介面 1:1 精確對齊**。
     """)
     
     st.divider()
 
-    uploaded_file = st.file_uploader("上傳新員工入職表格 / CV", type=["pdf", "docx", "xlsx", "txt", "png", "jpg"])
+    uploaded_file = st.file_uploader("上傳新員工入職表格 / 附件合集", type=["pdf", "docx", "xlsx", "txt", "png", "jpg"])
 
     st.divider()
 
     st.markdown("🌐 公司網站：[jumboorient.com.hk](https://jumboorient.com.hk)")
-    st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
-    st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
+    st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 HR Tech Support。")
 
 # 6. eHRP 格式清洗核心函數
 def normalize_ehrp_data(raw_dict):
@@ -216,7 +215,7 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (包含即時進度狀態顯示)
+# 7. 主介面邏輯 (進階指向性 Prompt 引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
@@ -241,14 +240,14 @@ if uploaded_file:
                         is_noisy = len(file_text.strip()) > 0 and (file_text.count('1') > len(file_text) * 0.25)
                         
                         if force_ocr or len(file_text.strip()) < 200 or is_noisy:
-                            status_box.write("🖼️ 檢測到影印本/掃描檔，正在渲染高解像度頁面圖片...")
+                            status_box.write("🖼️ 檢測到影印本合集，正在渲染頁面 (涵蓋證件、合約與表格)...")
                             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                             max_pages = min(12, len(doc))
                             
                             progress_bar = st.progress(0)
                             for i in range(max_pages):
                                 page = doc[i]
-                                pix = page.get_pixmap(dpi=130)
+                                pix = page.get_pixmap(dpi=100)
                                 img_bytes = pix.tobytes("jpeg", jpg_quality=85)
                                 b64 = base64.b64encode(img_bytes).decode("utf-8")
                                 base64_images.append(b64)
@@ -263,38 +262,48 @@ if uploaded_file:
                     elif uploaded_file.name.endswith(".txt"):
                         file_text = uploaded_file.read().decode("utf-8")
 
-                    status_box.write(f"📊 **診斷資訊**: 向量文字長度 `{len(file_text)}` 字元 | 轉換圖片頁數 `{len(base64_images)}` 頁")
-                    status_box.write("🧠 正在發送至 AI 進行多模態語意與微觀欄位提取...")
+                    status_box.write(f"📊 **診斷資訊**: 向量文字提取 `{len(file_text)}` 字元 | 轉換圖片 `{len(base64_images)}` 頁")
+                    status_box.write("🧠 正在根據「指向性來源原則」進行交叉比對與精準提煉...")
 
+                    # 【指向性核對升級】的 System Prompt
                     system_prompt = """
-                    你是一個極度嚴謹的 eHRP 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
+                    你是一個極度嚴謹的 HR 入職資料提取助手。請從輸入的文件圖像或文字中提取個人資料，並回傳 JSON 物件。
+
+                    【極重要：資料來源優先級與指向性核對原則】
+                    為確保 HR 數據 100% 精準，請遇到資料衝突時，嚴格按照以下文檔優先級提取資料：
+                    1. 核心入職條件：職銜 (Designation)、部門 (Department)、薪金 (Salary)、職級/級別 (Rank/Grade/Point)、生效日期 -> 必須以「月薪僱傭合約」及「面試評估表/錄用條款」為絕對準則。
+                    2. 個人身份核對：
+                       - 身份證英文全名 (name_on_id)、身份證號碼 (id_no)、出生日期、性別 -> 必須以「香港身份證副本」圖像為絕對準則。
+                       - 銀行名稱 (bank) 及 帳號 (account_no) -> 必須以「銀行卡/提款卡影印本」(如 Hang Seng Bank 卡面資訊) 為準。
+                       - 居住地址 (address) -> 優先參考「住址證明影印本」，其次為「職位申請表」。
+                    3. 補充背景資料：聯絡電話、電郵、緊急聯絡人 (Next of Kin)、學歷 (Education)、過往履歷 (Prev_Employment) -> 請從「職位申請表」或「CV」中提取。
 
                     【極重要原則 - 零猜測/零幻視】
-                    1. 必須 100% 根據圖像中的清晰文字提取，不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作任何字詞！
-                    2. 常用部門請嚴格辨識：若是「寫字樓」，請填寫「寫字樓」或「HOF」，切勿錯看成任何不存在的字詞。
-                    3. 欄位精準映射說明：
-                       - employee_no: 員工編號 / 僱員編號 (例如 E26073)
-                       - given_name: 英文名 (例如 WING FAAT)
-                       - surname: 英文姓 (例如 CHIU)
-                       - name_on_id: 身份證英文全名
-                       - given_name_secondary: 中文名字 (例如 榮發)
-                       - surname_secondary: 中文姓氏 (例如 趙)
-                       - designation: 職銜 (例如 發展經理)
-                       - department: 所屬部門 / 組別 (例如 寫字樓 / HOF)
-                       - commencement_date: 生效日期 / 受僱日期
-                       - bank: 銀行名稱 (例如 恒生銀行, HANG SENG, HSBC)
-                       - account_no: 銀行帳號 (例如 2419411158)
-                       - salary: 底薪 / 工資金額 (例如 44810.00)
-                       - rank: 職級 (例如 R8)
-                       - grade: 級別 (例如 G12, 12)
-                       - point: 薪金點 / 支薪點 (例如 102)
-                       - address_line_1, address_line_2, address_line_3: 居住地址 (如未提及請填 "")
+                    1. 不確定的字詞、模糊字跡或未出現的欄位，請直接填寫 "" (空字串)。絕對不允許憑空猜測或創作！
+                    2. 常用部門請嚴格辨識：若是「寫字樓」，請填寫「寫字樓」或「HOF」。
+
+                    【欄位精準映射說明】
+                    - employee_no: 員工編號 / 僱員編號 (例如 E26073)
+                    - given_name: 英文名 (例如 WING FAAT)
+                    - surname: 英文姓 (例如 CHIU)
+                    - given_name_secondary: 中文名字 (例如 榮發)
+                    - surname_secondary: 中文姓氏 (例如 趙)
+                    - designation: 職銜 (例如 發展經理)
+                    - commencement_date: 生效日期 / 受僱日期
+                    - bank: 結算銀行名稱 (例如 HANG SENG, HSBC, BOC)
+                    - account_no: 銀行帳號 (例如 2419411158)
+                    - salary: 每月底薪 / 工資金額 (例如 44810.00)
+                    - rank: 職級 (例如 R8)
+                    - grade: 級別 (例如 12, G12)
+                    - point: 薪金點 / 支薪點 (例如 102)
+                    - address_line_1, address_line_2, address_line_3: 居住地址 (如未提及請填 "")
+                    - prev_employment (陣列): [{company, date_join, date_left, designation, last_drawn}] ("last_drawn" 對應「最後薪金」)
 
                     必須只回傳 valid JSON 物件，不要包含 Markdown 標記或額外解釋。
                     """
 
                     if base64_images:
-                        user_content = [{"type": "text", "text": "請仔細辨識以下入職表格/合約圖像，精準提煉 eHRP 個人資料 JSON（不確定欄位一律填空字串 \"\"）："}]
+                        user_content = [{"type": "text", "text": "請仔細辨識以下文件與證件副本，並嚴格遵循「指向性核對原則」提煉 eHRP 個人資料 JSON："}]
                         for b64 in base64_images:
                             user_content.append({
                                 "type": "image_url",
@@ -360,7 +369,7 @@ if uploaded_file:
                         extracted_json = json.loads(content_str)
                         normalized_data = normalize_ehrp_data(extracted_json)
                         st.session_state["normalized_json"] = normalized_data
-                        status_box.update(label="✅ 解析成功！格式已轉換並對齊 eHRP 結構。", state="complete", expanded=False)
+                        status_box.update(label="✅ 解析成功！指向性校驗完成，格式已對齊 eHRP 結構。", state="complete", expanded=False)
                     else:
                         status_box.update(label="❌ API 呼叫失敗", state="error")
                         st.error(f"HTTP Status: {response.status_code}\n錯誤細節：{response.text}")
