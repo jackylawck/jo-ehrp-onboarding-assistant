@@ -12,16 +12,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# 2. 安全讀取 Streamlit Secrets (靜默載入，不於 UI 暴露)
+# 2. 安全讀取 Streamlit Secrets (自動辨識 Key 來源)
 secret_token = ""
-if "GEMINI_API_KEY" in st.secrets:
-    secret_token = st.secrets["GEMINI_API_KEY"]
-elif "GITHUB_TOKEN" in st.secrets:
-    secret_token = st.secrets["GITHUB_TOKEN"]
-elif "OPENAI_API_KEY" in st.secrets:
-    secret_token = st.secrets["OPENAI_API_KEY"]
+token_source = ""
 
-# 3. 香港常見銀行 Clearing Code 對照表
+if "GROQ_API_KEY" in st.secrets and st.secrets["GROQ_API_KEY"]:
+    secret_token = st.secrets["GROQ_API_KEY"]
+    token_source = "GROQ_API_KEY"
+elif "GITHUB_TOKEN" in st.secrets and st.secrets["GITHUB_TOKEN"]:
+    secret_token = st.secrets["GITHUB_TOKEN"]
+    token_source = "GITHUB_TOKEN"
+elif "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
+    secret_token = st.secrets["OPENAI_API_KEY"]
+    token_source = "OPENAI_API_KEY"
+
+# 3. 香港常見銀行 Clearing Code 對照表 (Bank Mapping)
 BANK_CLEARING_CODES = {
     "004": ["HSBC", "HONGKONG AND SHANGHAI BANKING", "匯豐", "香港上海滙豐銀行"],
     "024": ["HANG SENG", "HANG SENG BANK", "恒生", "恒生銀行"],
@@ -78,12 +83,12 @@ with st.sidebar:
     active_token = ""
     if key_mode == "使用開源公共免費額度":
         if secret_token:
-            st.info("🌱 **開源公共資源已載入** (來自後端 Secrets)。歡迎自由體驗！")
+            st.info(f"🌱 **已載入 Secrets Key** (來源: `{token_source}`)")
             active_token = secret_token
         else:
-            st.error("⚠️ 後端未檢測到 Secrets Token，請切換至「自備 API Key」模式。")
+            st.error("⚠️ Secrets 未檢測到有效的 Key，請檢查 Secrets 設定。")
     else:
-        user_key = st.text_input("請輸入自備 API Key (Gemini / GitHub / OpenAI)：", type="password")
+        user_key = st.text_input("請輸入自備 Key (Groq / GitHub / OpenAI)：", type="password")
         if user_key:
             st.success("🔒 自備 Key 已成功套用")
             active_token = user_key
@@ -108,7 +113,7 @@ with st.sidebar:
     st.markdown("⚙️ 如遇系統問題或特殊情境，請聯絡 [Jacky Law](https://github.com/jackylawck)。")
     st.caption("© 2026 Jumbo Orient Engineering Ltd. Built for enterprise onboarding automation.")
 
-# 6. eHRP 格式清洗核心函數
+# 6. eHRP 格式清洗核心函數 (Data Normalizer)
 def normalize_ehrp_data(raw_dict):
     def to_uppercase(text):
         return str(text).strip().upper() if text and str(text).upper() != "NONE" else ""
@@ -168,15 +173,15 @@ def normalize_ehrp_data(raw_dict):
     }
     return cleaned
 
-# 7. 主介面邏輯 (多 API 自動路由引擎)
+# 7. 主介面邏輯 (多 Endpoint 自動適應引擎)
 if uploaded_file:
     st.success(f"已成功載入檔案：`{uploaded_file.name}`")
     
     if st.button("🚀 開始解析並清洗數據", type="primary"):
         if not active_token:
-            st.error("請先選擇 AI 金鑰模式並確保金鑰載入成功！")
+            st.error("請先確保 API Key / Token 載入成功！")
         else:
-            with st.spinner("AI 正在解析文件內文並清洗格式中..."):
+            with st.spinner("AI 正在解析文件內容中..."):
                 try:
                     file_text = ""
                     if uploaded_file.name.endswith(".pdf"):
@@ -193,76 +198,46 @@ if uploaded_file:
 
                     system_prompt = """
                     你是一個專業的 eHRP 入職資料提取助手。請從輸入的文件內容中提取員工入職資料，並回傳 JSON 物件。
-                    欄位說明：
-                    - given_name: 英文名字
-                    - surname: 英文姓氏
-                    - given_name_secondary: 中文名字
-                    - surname_secondary: 中文姓氏
-                    - name_on_id: 身份證英文全名
-                    - id_no: 身份證號碼 (例如 Z123456(7))
-                    - date_of_birth: 出生日期 (YYYY-MM-DD 或 DD/MM/YYYY)
-                    - gender: 性別 (MALE/FEMALE)
-                    - mobile: 電話號碼
-                    - address_line_1, address_line_2, address_line_3: 地址
-                    - designation: 職銜
-                    - department: 部門 Code
-                    - commencement_date: 入職/生效日期
-                    - bank: 銀行名稱
-                    - account_no: 銀行帳號
-                    - salary: 月薪數字
-                    - email: 電郵地址
-                    
-                    若文件中某欄位不存在，請填寫 ""。必須只回傳 valid JSON 物件，不要有 Markdown 或額外文字。
+                    欄位：given_name, surname, given_name_secondary, surname_secondary, name_on_id, id_no, date_of_birth, gender, mobile, address_line_1, address_line_2, address_line_3, designation, department, commencement_date, bank, account_no, salary, email.
+                    若無資料請填 ""。必須只回傳 valid JSON 物件，不要有 Markdown。
                     """
 
-                    # API 自動判斷路由
-                    if active_token.startswith("AIzaSy"):
-                        # 1. Google Gemini API (最推薦免費 API)
-                        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={active_token}"
-                        payload = {
-                            "contents": [{
-                                "parts": [{"text": f"{system_prompt}\n\n請解析以下文件內文並輸出 JSON：\n\n{file_text}"}]
-                            }],
-                            "generationConfig": {"response_mime_type": "application/json"}
-                        }
-                        response = requests.post(api_url, json=payload, timeout=30)
-                        if response.status_code == 200:
-                            content_str = response.json()['candidates'][0]['content']['parts'][0]['text']
-                            extracted_json = json.loads(content_str)
-                            normalized_data = normalize_ehrp_data(extracted_json)
-                            st.session_state["normalized_json"] = normalized_data
-                        else:
-                            st.error(f"Gemini API 呼叫失敗 (HTTP {response.status_code}): {response.text}")
-
+                    # 根據 Token 自動切換 Endpoint
+                    if active_token.startswith("gsk_"):
+                        # Groq API (最推薦：免 VPN、香港可用、極速)
+                        api_url = "https://api.groq.com/openai/v1/chat/completions"
+                        model_name = "llama-3.3-70b-versatile"
+                    elif active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
+                        # GitHub Models API
+                        api_url = "https://models.inference.ai.azure.com/chat/completions"
+                        model_name = "gpt-4o-mini"
                     else:
-                        # 2. GitHub Models 或 OpenAI API
-                        if active_token.startswith("ghp_") or active_token.startswith("github_pat_"):
-                            api_url = "https://models.inference.ai.azure.com/chat/completions"
-                            model_name = "gpt-4o-mini"
-                        else:
-                            api_url = "https://api.openai.com/v1/chat/completions"
-                            model_name = "gpt-4o-mini"
+                        # OpenAI API
+                        api_url = "https://api.openai.com/v1/chat/completions"
+                        model_name = "gpt-4o-mini"
 
-                        headers = {
-                            "Authorization": f"Bearer {active_token}",
-                            "Content-Type": "application/json"
-                        }
-                        payload = {
-                            "model": model_name,
-                            "messages": [
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"請解析以下文件內文並輸出 JSON：\n\n{file_text}"}
-                            ],
-                            "response_format": {"type": "json_object"}
-                        }
-                        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-                        if response.status_code == 200:
-                            content_str = response.json()['choices'][0]['message']['content']
-                            extracted_json = json.loads(content_str)
-                            normalized_data = normalize_ehrp_data(extracted_json)
-                            st.session_state["normalized_json"] = normalized_data
-                        else:
-                            st.error(f"API 呼叫失敗 (HTTP Status: {response.status_code})。細節：{response.text}")
+                    headers = {
+                        "Authorization": f"Bearer {active_token}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": model_name,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"請解析以下文件並輸出 JSON：\n\n{file_text}"}
+                        ],
+                        "response_format": {"type": "json_object"}
+                    }
+                    
+                    response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+                    
+                    if response.status_code == 200:
+                        content_str = response.json()['choices'][0]['message']['content']
+                        extracted_json = json.loads(content_str)
+                        normalized_data = normalize_ehrp_data(extracted_json)
+                        st.session_state["normalized_json"] = normalized_data
+                    else:
+                        st.error(f"API 驗證失敗 (HTTP Status: {response.status_code})。目前使用 Token 前綴: `{active_token[:6]}...` (來源: {token_source})。錯誤詳細訊息：{response.text}")
 
                 except Exception as e:
                     st.error(f"解析過程中發生錯誤: {str(e)}")
